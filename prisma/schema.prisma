@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  Planned
+  Active
+  Blocked
+  Done
+}
+
+enum TaskStatus {
+  ToDo
+  InProgress
+  Waiting
+  Completed
+}
+
+enum Priority {
+  Low
+  Medium
+  High
+  Critical
+}
+
+enum RoleName {
+  Admin
+  ProjectOwner
+  Technician
+}
+
+model User {
+  id            String       @id @default(uuid())
+  email         String       @unique
+  name          String?
+  passwordHash  String
+  roles         UserRole[]
+  ownedProjects Project[]    @relation("ProjectResponsible")
+  tasks         Task[]       @relation("TaskAssignedTo")
+  comments      TaskComment[]
+  activities    ActivityLog[]
+  calendarEvents CalendarEvent[]
+  sessions      Session[]
+  accounts      Account[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Role {
+  id    String   @id @default(uuid())
+  name  RoleName @unique
+  users UserRole[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  @@id([userId, roleId])
+}
+
+model Project {
+  id                   String         @id @default(uuid())
+  title                String
+  description          String?
+  scope                String?
+  responsibleId        String?
+  responsible          User?          @relation("ProjectResponsible", fields: [responsibleId], references: [id])
+  startDate            DateTime?
+  endDate              DateTime?
+  status               ProjectStatus  @default(Planned)
+  tasks                Task[]
+  notes                ProjectNote[]
+  attachments          Attachment[]
+  activities           ActivityLog[]
+  domainNewOUPlan      String?
+  domainUserMigration  String?
+  domainGPOPlan        String?
+  exchMailboxPlan      String?
+  exchAutodiscover     String?
+  exchDatabaseDAG      String?
+  exchHybridNotes      String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+}
+
+model Task {
+  id            String      @id @default(uuid())
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  assignedToId  String?
+  assignedTo    User?       @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  status        TaskStatus  @default(ToDo)
+  priority      Priority    @default(Medium)
+  position      Int         @default(0)
+  startDate     DateTime?
+  dueDate       DateTime?
+  subtasks      Subtask[]
+  comments      TaskComment[]
+  events        CalendarEvent[]
+  attachments   Attachment[]
+  activities    ActivityLog[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model Subtask {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title     String
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProjectNote {
+  id        String    @id @default(uuid())
+  projectId String
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title     String?
+  content   Json
+  tags      String[]
+  attachments Attachment[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model CalendarEvent {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title     String
+  start     DateTime
+  end       DateTime
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  reminderMinutesBefore Int?
+  reminderChannel       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  taskId     String?
+  task       Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  noteId     String?
+  note       ProjectNote? @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  fileName   String
+  mimeType   String
+  size       Int
+  url        String
+  createdAt  DateTime @default(now())
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  action      String
+  entityType  String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+
+model Account {
+  id                 String  @id @default(uuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String? @map("refresh_token")
+  access_token       String? @map("access_token")
+  expires_at         Int?    @map("expires_at")
+  token_type         String? @map("token_type")
+  scope              String?
+  id_token           String? @map("id_token")
+  session_state      String?
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}

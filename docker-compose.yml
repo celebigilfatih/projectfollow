@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: projectfollow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: projectfollow
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./prisma/migrations/0_init:/docker-entrypoint-initdb.d
+
+  adminer:
+    image: adminer:latest
+    container_name: projectfollow-adminer
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8099:8080"
+
+volumes:
+  pgdata:
