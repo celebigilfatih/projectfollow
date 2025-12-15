@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={twMerge("rounded border bg-white p-4", className)}>{children}</div>;
+  return <div className={twMerge("rounded-lg border border-neutral-100 bg-white p-4 shadow-sm", className)}>{children}</div>;
 }
 
 export function CardHeader({ className, children }: { className?: string; children: ReactNode }) {

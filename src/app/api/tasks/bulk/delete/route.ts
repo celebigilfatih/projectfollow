@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     await prisma.$transaction([
       prisma.attachment.deleteMany({ where: { taskId: id } }),
       prisma.taskComment.deleteMany({ where: { taskId: id } }),
+      prisma.taskAssignee.deleteMany({ where: { taskId: id } }),
       prisma.subtask.deleteMany({ where: { taskId: id } }),
       prisma.task.delete({ where: { id } }),
     ]);

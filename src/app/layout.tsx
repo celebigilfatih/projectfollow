@@ -6,6 +6,10 @@ import { getServerSession } from "next-auth";
 import { authConfig } from "@/lib/auth";
 import Providers from "@/app/providers";
 import AuthButtons from "@/components/auth-buttons";
+import CommandPalette from "@/components/command-palette";
+import Toaster from "@/components/ui/toaster";
+import { Input } from "@/components/ui/input";
+import { Home, Calendar, FolderKanban, Users, NotebookPen } from "lucide-react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,17 +35,51 @@ export default async function RootLayout({
   return (
     <html lang="tr">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <header className="border-b bg-white">
-          <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-            <div className="flex items-center gap-6">
-              <Link href="/dashboard" className="font-medium">Dashboard</Link>
-              <Link href="/projects" className="font-medium">Projeler</Link>
-              <Link href="/calendar" className="font-medium">Takvim</Link>
+        <div className="min-h-screen bg-neutral-50">
+          <div className="flex">
+            <aside className="sticky top-0 h-screen w-64 shrink-0 border-r border-[var(--border)] bg-white">
+              <div className="flex h-14 items-center justify-between px-4">
+                <Link href="/" className="flex items-center gap-2 font-bold"><span className="inline-block h-5 w-5 rounded bg-zinc-600" /> Shadon UI Kit</Link>
+              </div>
+              <nav className="space-y-6 px-3 py-2 text-sm">
+                <div>
+                  <div className="px-2 text-xs font-semibold text-zinc-500">Dashboards</div>
+                  <ul className="mt-2 space-y-1">
+                    <li><Link href="/" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Home className="h-4 w-4" /> Default</Link></li>
+                  </ul>
+                </div>
+                <div>
+                  <div className="px-2 text-xs font-semibold text-zinc-500">Apps</div>
+                  <ul className="mt-2 space-y-1">
+                    <li><Link href="/projects" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><FolderKanban className="h-4 w-4" /> Projeler</Link></li>
+                    <li><Link href="/kanban" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><FolderKanban className="h-4 w-4" /> Kanban</Link></li>
+                    <li><Link href="/notes" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><NotebookPen className="h-4 w-4" /> Notlar</Link></li>
+                    <li><Link href="/calendar" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Calendar className="h-4 w-4" /> Takvim</Link></li>
+                    <li><Link href="/calendar-copy" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Calendar className="h-4 w-4" /> Takvim (Klon)</Link></li>
+                    <li><Link href="/teams" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Users className="h-4 w-4" /> Takımlar</Link></li>
+                    <li><Link href="/people" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Users className="h-4 w-4" /> Kişiler</Link></li>
+                  </ul>
+                </div>
+                
+              </nav>
+            </aside>
+            <div className="flex-1">
+              <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-white/90 backdrop-blur">
+                <div className="flex items-center justify-between px-2 sm:px-4 lg:px-6 py-3">
+                  <div className="flex items-center gap-2">
+                    <Input placeholder="Ara" className="w-64" />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <CommandPalette />
+                    <AuthButtons session={session} />
+                  </div>
+                </div>
+              </header>
+              <Providers>{children}</Providers>
             </div>
-            <AuthButtons session={session} />
-          </nav>
-        </header>
-        <Providers>{children}</Providers>
+          </div>
+        </div>
+        <Toaster richColors closeButton />
       </body>
     </html>
   );

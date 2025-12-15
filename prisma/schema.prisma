@@ -38,14 +38,17 @@ model User {
   email         String       @unique
   name          String?
   passwordHash  String
+  deleted       Boolean      @default(false)
   roles         UserRole[]
   ownedProjects Project[]    @relation("ProjectResponsible")
   tasks         Task[]       @relation("TaskAssignedTo")
+  teamMemberships TeamMember[]
   comments      TaskComment[]
   activities    ActivityLog[]
   calendarEvents CalendarEvent[]
   sessions      Session[]
   accounts      Account[]
+  assignedTasks TaskAssignee[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -97,6 +100,8 @@ model Task {
   description   String?
   assignedToId  String?
   assignedTo    User?       @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  assignedTeamId String?
+  assignedTeam   Team?       @relation("TaskAssignedTeam", fields: [assignedTeamId], references: [id])
   status        TaskStatus  @default(ToDo)
   priority      Priority    @default(Medium)
   position      Int         @default(0)
@@ -106,6 +111,7 @@ model Task {
   comments      TaskComment[]
   events        CalendarEvent[]
   attachments   Attachment[]
+  assignees     TaskAssignee[]
   activities    ActivityLog[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -181,6 +187,8 @@ model ActivityLog {
   project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   taskId      String?
   task        Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  teamId      String?
+  team        Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   action      String
   entityType  String
   metadata    Json?
@@ -217,4 +225,33 @@ model VerificationToken {
   token      String   @unique
   expires    DateTime
   @@unique([identifier, token])
+}
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  description String?
+  members   TeamMember[]
+  tasks     Task[]     @relation("TaskAssignedTeam")
+  activities ActivityLog[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model TeamMember {
+  teamId String
+  userId String
+  role   String?
+  team   Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@id([teamId, userId])
+}
+model TaskAssignee {
+  taskId    String
+  userId    String
+  task      Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@id([taskId, userId])
 }

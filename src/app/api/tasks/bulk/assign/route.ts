@@ -10,9 +10,10 @@ export async function POST(req: NextRequest) {
   const roles = (session as any).roles as any[] | undefined;
   if (!RBAC.canManageOwnProjects(roles)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const body = await req.json();
-  const { ids, assignedToId } = body as { ids: string[]; assignedToId?: string | null };
+  const { ids, assignedToId, assignedTeamId } = body as { ids: string[]; assignedToId?: string | null; assignedTeamId?: string | null };
   if (!Array.isArray(ids) || ids.length === 0) return NextResponse.json({ error: "invalid ids" }, { status: 400 });
-  const target = assignedToId || null;
-  await prisma.$transaction(ids.map((id) => prisma.task.update({ where: { id }, data: { assignedToId: target } })));
+  const to = assignedToId ?? null;
+  const team = assignedTeamId ?? null;
+  await prisma.$transaction(ids.map((id) => prisma.task.update({ where: { id }, data: { assignedToId: to, assignedTeamId: team } })));
   return NextResponse.json({ ok: true });
 }

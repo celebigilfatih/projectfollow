@@ -3,18 +3,21 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
 
-export default function TaskDetailClient({ task, users }: { task: any; users: Array<{ id: string; email: string; name: string | null }> }) {
+export default function TaskDetailClient({ task, users, teams }: { task: any; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string }> }) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [status, setStatus] = useState(task.status);
   const [priority, setPriority] = useState(task.priority);
   const [assignedToId, setAssignedToId] = useState<string | undefined>(task.assignedToId ?? undefined);
+  const [assignedTeamId, setAssignedTeamId] = useState<string | undefined>(task.assignedTeamId ?? undefined);
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(Array.isArray(task.assignees) ? task.assignees.map((a: any) => a.userId) : []);
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [comment, setComment] = useState("");
 
   async function save() {
-    await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", body: JSON.stringify({ title, description, status, priority, assignedToId }) });
+    await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", body: JSON.stringify({ title, description, status, priority, assignedToId, assignedTeamId, assigneeIds }) });
     location.reload();
   }
 
@@ -49,27 +52,54 @@ export default function TaskDetailClient({ task, users }: { task: any; users: Ar
       <div className="rounded border bg-white p-4 space-y-2">
         <Input value={title} onChange={(e) => setTitle(e.target.value)} />
         <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded border px-3 py-2 text-sm">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="ToDo">To Do</option>
             <option value="InProgress">In Progress</option>
             <option value="Waiting">Waiting</option>
             <option value="Completed">Completed</option>
-          </select>
-          <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded border px-3 py-2 text-sm">
+          </Select>
+          <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
             <option value="Low">Low</option>
             <option value="Medium">Medium</option>
             <option value="High">High</option>
             <option value="Critical">Critical</option>
-          </select>
-          <select value={assignedToId ?? ""} onChange={(e) => setAssignedToId(e.target.value || undefined)} className="rounded border px-3 py-2 text-sm">
+          </Select>
+          <Select value={assignedToId ?? ""} onChange={(e) => setAssignedToId(e.target.value || undefined)}>
             <option value="">Atanmadı</option>
             {users.map((u) => (
               <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
             ))}
-          </select>
+          </Select>
+          <Select value={assignedTeamId ?? ""} onChange={(e) => setAssignedTeamId(e.target.value || undefined)}>
+            <option value="">Takım atanmadı</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </Select>
         </div>
-        <Button onClick={save}>Kaydet</Button>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          <div>
+            <div className="text-xs text-zinc-600 mb-1">Çoklu kişi atama</div>
+            <Select
+              multiple
+              value={assigneeIds}
+              onChange={(e) => {
+                const options = Array.from((e.target as HTMLSelectElement).selectedOptions).map((o) => o.value);
+                setAssigneeIds(options);
+              }}
+              className="h-24 w-full"
+            >
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-end justify-end">
+            <Button onClick={save}>Kaydet</Button>
+          </div>
+        </div>
+        
       </div>
       <div className="rounded border bg-white p-4 space-y-2">
         <div className="font-medium">Checklists</div>
