@@ -2,13 +2,17 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authConfig } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
-import { Input } from "@/components/ui/input";
+ 
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
+import { RBAC } from "@/lib/rbac";
 
-export default async function TeamDetailPage({ params }: { params: { id: string } }) {
+export default async function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authConfig as any);
   if (!session) return redirect("/login");
-  const team = await prisma.team.findUnique({ where: { id: params.id }, include: { members: { include: { user: true } } } });
+  const { id } = await params;
+  if (!id || typeof id !== "string" || id.length === 0) return notFound();
+  const team = await prisma.team.findUnique({ where: { id }, include: { members: { include: { user: true } } } });
   if (!team) return notFound();
   const users = await prisma.user.findMany({ select: { id: true, email: true, name: true } });
   return (
@@ -25,10 +29,18 @@ export default async function TeamDetailPage({ params }: { params: { id: string 
                 <div className="text-sm">{m.user?.name ?? m.user?.email}</div>
                 <div className="text-xs text-zinc-500">{m.role ?? "Üye"}</div>
               </div>
-              <form
+              <form method="post"
                 action={async () => {
                   "use server";
-                  await fetch(`${process.env.NEXTAUTH_URL}/api/teams/${team.id}/members?userId=${m.userId}`, { method: "DELETE" });
+                  const session = await getServerSession(authConfig as any);
+                  if (!session) return;
+                  const roles = (session as any).roles as any[] | undefined;
+                  if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
+                    return (await import("next/navigation")).redirect(`/teams/${team.id}?error=forbidden`);
+                  }
+                  await prisma.teamMember.delete({ where: { teamId_userId: { teamId: team.id, userId: m.userId } } });
+                  await prisma.activityLog.create({ data: { userId: (session as any).user?.id, teamId: team.id, action: "TeamMemberRemove", entityType: "TeamMember", metadata: { targetUserId: m.userId } } });
+                  return (await import("next/navigation")).redirect(`/teams/${team.id}?ok=member_removed`);
                 }}
               >
                 <Button type="submit" variant="destructive" size="sm" className="text-xs">Kaldır</Button>
@@ -48,9 +60,17 @@ function AddMemberForm({ teamId, users }: { teamId: string; users: Array<{ id: s
       action={async (formData: FormData) => {
         "use server";
         const userId = String(formData.get("userId") || "");
-        const role = String(formData.get("role") || "");
+        const role = String(formData.get("role") || "Member");
         if (!userId) return;
-        await fetch(`${process.env.NEXTAUTH_URL}/api/teams/${teamId}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId, role: role || undefined }) });
+        const session = await getServerSession(authConfig as any);
+        if (!session) return;
+        const roles = (session as any).roles as any[] | undefined;
+        if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
+          return (await import("next/navigation")).redirect(`/teams/${teamId}?error=forbidden`);
+        }
+        await prisma.teamMember.create({ data: { teamId, userId, role } });
+        await prisma.activityLog.create({ data: { userId: (session as any).user?.id, teamId, action: "TeamMemberAdd", entityType: "TeamMember", metadata: { targetUserId: userId } } });
+        return (await import("next/navigation")).redirect(`/teams/${teamId}?ok=member_added`);
       }}
     >
       <div className="font-medium">Üye ekle</div>
@@ -60,7 +80,10 @@ function AddMemberForm({ teamId, users }: { teamId: string; users: Array<{ id: s
           <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
         ))}
       </select>
-      <Input name="role" placeholder="Rol (opsiyonel)" />
+      <Select name="role" defaultValue="Member" required className="w-full">
+        <option value="Member">Member</option>
+        <option value="Lead">Lead</option>
+      </Select>
       <Button type="submit">Ekle</Button>
     </form>
   );

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { FolderKanban, ListTodo, CheckCircle2, Calendar } from "lucide-react";
+import DonutChart from "@/components/donut-chart";
 
 export default async function Home({ searchParams }: { searchParams?: Record<string, string | undefined> }) {
   const totalProjects = await prisma.project.count();
@@ -29,6 +30,7 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
     pipe[g.status as TaskStatus] = Number(c);
   }
   const pipeTotal = Object.values(pipe).reduce((a, b) => a + b, 0) || 1;
+  const now = new Date();
   const params = searchParams ? await (searchParams as any) : {};
   const q = params.q && params.q !== "" ? params.q : undefined;
   const statusParam = params.status && params.status !== "" ? params.status : undefined;
@@ -36,6 +38,40 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
   const view = params.view && params.view !== "" ? params.view : "card";
   const responsibleIdParam = params.responsibleId && params.responsibleId !== "" ? params.responsibleId : undefined;
   const projectId = params.projectId && params.projectId !== "" ? params.projectId : undefined;
+  const monthsParam = params.months && params.months !== "" ? parseInt(params.months) : 9;
+  const monthsRange = Math.min(12, Math.max(6, isNaN(monthsParam) ? 9 : monthsParam));
+  const since = new Date(now.getFullYear(), now.getMonth() - (monthsRange - 1), 1);
+  const recentTasks = await prisma.task.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true, status: true } });
+  const months: { key: string; label: string; total: number; completed: number }[] = [];
+  for (let i = monthsRange - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"][d.getMonth()];
+    months.push({ key, label, total: 0, completed: 0 });
+  }
+  for (const t of recentTasks as any[]) {
+    const d = new Date(t.createdAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const m = months.find((x) => x.key === key);
+    if (m) {
+      m.total += 1;
+      if (t.status === TaskStatus.Completed) m.completed += 1;
+    }
+  }
+  const maxVal = Math.max(1, ...months.map((m) => m.total));
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const topPerfGrouped = await prisma.task.groupBy({
+    by: ["assignedToId"],
+    where: { status: TaskStatus.Completed, updatedAt: { gte: startOfMonth, lt: endOfMonth }, assignedToId: { not: null } },
+    _count: { _all: true },
+  });
+  const topPerformanceRanking = (topPerfGrouped as any[])
+    .filter((g) => g.assignedToId)
+    .map((g) => ({ assignedToId: String(g.assignedToId), count: Number((g._count && g._count._all) || g._count || 0) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4);
+  
   const [users, projects] = await Promise.all([
     prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } }),
     prisma.project.findMany({
@@ -78,6 +114,22 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
     }
   }
 
+  const projectStatusGroup = await prisma.project.groupBy({ by: ["status"], _count: { _all: true } });
+  const statusCounts: Record<ProjectStatus, number> = { [ProjectStatus.Planned]: 0, [ProjectStatus.Active]: 0, [ProjectStatus.Blocked]: 0, [ProjectStatus.Done]: 0 } as any;
+  for (const g of projectStatusGroup as any[]) {
+    const c = (g._count && g._count._all) || g._count || 0;
+    statusCounts[g.status as ProjectStatus] = Number(c);
+  }
+  const donutItems = [
+    { label: "Planlandı", value: statusCounts[ProjectStatus.Planned] || 0, className: "text-zinc-600" },
+    { label: "Aktif", value: statusCounts[ProjectStatus.Active] || 0, className: "text-blue-600" },
+    { label: "Bloklu", value: statusCounts[ProjectStatus.Blocked] || 0, className: "text-red-600" },
+    { label: "Tamamlandı", value: statusCounts[ProjectStatus.Done] || 0, className: "text-green-600" },
+  ];
+  const donutTotal = donutItems.reduce((a, b) => a + b.value, 0);
+  const centerLabel = `${donutTotal}`;
+  const recentLogsGlobal = await prisma.activityLog.findMany({ take: 5, include: { user: true, project: true }, orderBy: { createdAt: "desc" } });
+
   return (
     <div className="px-2 sm:px-4 lg:px-6 py-0">
       <div className="mb-4 flex items-center justify-between">
@@ -85,28 +137,28 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
         <div className="flex items-center gap-2"></div>
       </div>
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Toplam Proje</div>
             <FolderKanban className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{totalProjects}</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Toplam Görev</div>
             <ListTodo className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{totalTasks}</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Tamamlanan Görev %</div>
             <CheckCircle2 className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{completedPct}%</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <CardHeader>
             <CardTitle>Tamamlanma oranı</CardTitle>
           </CardHeader>
@@ -122,7 +174,7 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
         </Card>
       </div>
       <div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-3">
-        <Card className="md:col-span-2 transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="md:col-span-2 transition duration-200">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 font-bold"><ListTodo className="h-5 w-5 text-neutral-600" /> Görevler</CardTitle>
             <QuickTaskModal projects={projects.map((p) => ({ id: p.id, title: p.title }))} />
@@ -163,7 +215,7 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
             )}
           </div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <CardHeader>
             <CardTitle>Durum Özeti</CardTitle>
           </CardHeader>
@@ -200,7 +252,116 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
             </div>
           </TooltipProvider>
         </Card>
-        
+        <Card className="transition duration-200">
+          <CardHeader>
+            <CardTitle>Grafikler ve Analiz</CardTitle>
+          </CardHeader>
+          <div>
+            <div className="flex items-center justify-between text-xs text-zinc-600">
+              <span>Son {monthsRange} ay</span>
+              <span>Toplam / Tamamlanan</span>
+            </div>
+            <div className="mt-2 flex items-center justify-end">
+              <form
+                className="flex items-center gap-2"
+                action={async (formData: FormData) => {
+                  "use server";
+                  const qs = new URLSearchParams();
+                  const months = String(formData.get("months") || "");
+                  if (q) qs.set("q", q);
+                  if (statusParam) qs.set("status", statusParam);
+                  if (sort) qs.set("sort", sort);
+                  if (view) qs.set("view", view);
+                  if (responsibleIdParam) qs.set("responsibleId", responsibleIdParam);
+                  if (projectId) qs.set("projectId", projectId);
+                  if (months) qs.set("months", months);
+                  const url = `/?${qs.toString()}`;
+                  return (await import("next/navigation")).redirect(url);
+                }}
+              >
+                <select name="months" defaultValue={String(monthsRange)} className="rounded-md border px-2 py-1 text-xs">
+                  <option value="6">6</option>
+                  <option value="9">9</option>
+                  <option value="12">12</option>
+                </select>
+                <Button type="submit" variant="outline" size="sm" className="text-[10px] px-2">Uygula</Button>
+              </form>
+            </div>
+            <TooltipProvider delayDuration={100}>
+              <div className={monthsRange === 6 ? "mt-2 grid grid-cols-6 gap-2" : monthsRange === 9 ? "mt-2 grid grid-cols-9 gap-2" : "mt-2 grid grid-cols-12 gap-2"}>
+                {months.map((m) => (
+                  <div key={m.key} className="flex flex-col items-center justify-end">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="relative w-6 h-32 rounded bg-neutral-100">
+                          <div style={{ height: `${Math.round((m.total / maxVal) * 100)}%` }} className="absolute bottom-0 left-0 right-0 rounded bg-neutral-300" />
+                          <div style={{ height: `${Math.round((m.completed / maxVal) * 100)}%` }} className="absolute bottom-0 left-0 right-0 rounded bg-[var(--primary)]" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>{m.label}: Toplam {m.total} • Tamamlanan {m.completed}</TooltipContent>
+                    </Tooltip>
+                    <div className="mt-1 text-[10px] text-zinc-600">{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            </TooltipProvider>
+          </div>
+        </Card>
+        <Card className="transition duration-200">
+          <CardHeader>
+            <CardTitle>Top Performance</CardTitle>
+          </CardHeader>
+          <div>
+            <div className="flex items-center justify-between text-xs text-zinc-600">
+              <span>Bu Ay</span>
+              <span>{new Date().toLocaleString("tr-TR", { month: "long", year: "numeric" })}</span>
+            </div>
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {topPerformanceRanking.map((r, idx) => {
+                const info = users.find((u) => u.id === r.assignedToId);
+                const name = info?.name ?? info?.email ?? "-";
+                const place = ["1.", "2.", "3.", "4."][idx];
+                return (
+                  <div key={r.assignedToId} className="flex flex-col items-center rounded-md border px-2 py-3">
+                    <span className="inline-block h-12 w-12 rounded-full bg-neutral-200" />
+                    <div className="mt-1 text-sm truncate max-w-[9rem] text-center">{name}</div>
+                    <div className="text-xs text-zinc-500">{place} • {r.count}</div>
+                  </div>
+                );
+              })}
+              {topPerformanceRanking.length === 0 ? (
+                <div className="col-span-4 text-xs text-zinc-500">Bu ay tamamlanan görev ataması bulunamadı.</div>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      </div>
+      <div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-3">
+        <Card className="md:col-span-2 transition duration-200">
+          <CardHeader>
+            <CardTitle>Aktif Proje Durumu</CardTitle>
+          </CardHeader>
+          <div>
+            <DonutChart items={donutItems} centerLabel={centerLabel} />
+          </div>
+        </Card>
+        <Card className="transition duration-200">
+          <CardHeader>
+            <CardTitle>Bildirimler</CardTitle>
+          </CardHeader>
+          <div className="space-y-2">
+            {recentLogsGlobal.map((log) => (
+              <div key={String(log.id)} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-600" />
+                  <span className="truncate">{log.project?.title ?? "-"} • {String(log.action)}</span>
+                </div>
+                <div className="text-[11px] text-zinc-500 shrink-0">{new Date(log.createdAt as any).toLocaleString()}</div>
+              </div>
+            ))}
+            {recentLogsGlobal.length === 0 ? <div className="text-xs text-zinc-500">Bildirim yok</div> : null}
+          </div>
+        </Card>
       </div>
       <Card className="transition duration-200">
         <CardHeader>
@@ -270,11 +431,11 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
         {view === "card" ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
             {projects.map((p) => (
-              <Link key={p.id} href={`/projects/${p.id}`} className="block group">
-                <Card className={"transition duration-200 hover:shadow-md hover:-translate-y-0.5 " + (p.status === "Done" ? "border-green-300" : p.status === "Blocked" ? "border-red-300" : p.status === "Active" ? "border-indigo-300" : "border-zinc-300")}>
+              <div key={p.id} className="block group">
+                <div className={"rounded-xl border border-[var(--border)] bg-white p-4 transition duration-200 " + (p.status === "Done" ? "border-green-300" : p.status === "Blocked" ? "border-red-300" : p.status === "Active" ? "border-indigo-300" : "border-zinc-300")}>
                   <div className={`flex items-start justify-between rounded-md px-3 py-2 ${p.status === "Done" ? "bg-green-50" : p.status === "Blocked" ? "bg-red-50" : p.status === "Active" ? "bg-indigo-50" : "bg-zinc-50"}`}>
                     <div className="min-w-0">
-                      <div className="font-medium truncate">{p.title}</div>
+                      <Link href={`/projects/${p.id}`} className="font-medium hover:underline truncate">{p.title}</Link>
                       <div className="mt-1 text-sm text-zinc-600 line-clamp-2">{p.description}</div>
                       <div className="mt-1 text-xs text-zinc-600">Sorumlu: {p.responsible ? (p.responsible.name ?? p.responsible.email) : "-"}</div>
                     </div>
@@ -311,8 +472,8 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
                     <Link href={`/projects/${p.id}#overview`} className="rounded border px-2 py-1 text-xs">Görevler</Link>
                     <Link href={`/?projectId=${p.id}#kanban`} className="rounded border px-2 py-1 text-xs">Kanban</Link>
                   </div>
-                </Card>
-              </Link>
+                </div>
+              </div>
             ))}
             {projects.length === 0 ? <div className="px-4 py-2 text-sm text-zinc-500">Proje bulunamadı</div> : null}
           </div>

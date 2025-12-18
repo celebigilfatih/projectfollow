@@ -6,9 +6,9 @@ import { twMerge } from "tailwind-merge";
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
-export function DropdownMenuContent({ className, children }: { className?: string; children: React.ReactNode }) {
+export const DropdownMenuContent = ({ className, children }: { className?: string; children: React.ReactNode }) => {
   return (
-    <DropdownMenuPrimitive.Content className={twMerge("z-50 min-w-[10rem] rounded-md border bg-white p-1 shadow-md", className)}>
+    <DropdownMenuPrimitive.Content className={twMerge("z-50 min-w-[10rem] rounded-md border border-[var(--border)] bg-white p-1 shadow-md", className)}>
       {children}
     </DropdownMenuPrimitive.Content>
   );

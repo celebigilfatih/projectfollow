@@ -9,7 +9,8 @@ import AuthButtons from "@/components/auth-buttons";
 import CommandPalette from "@/components/command-palette";
 import Toaster from "@/components/ui/toaster";
 import { Input } from "@/components/ui/input";
-import { Home, Calendar, FolderKanban, Users, NotebookPen } from "lucide-react";
+// icons moved to SidebarNav via string mapping; no direct imports here
+import SidebarNav from "@/components/sidebar-nav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,39 +36,46 @@ export default async function RootLayout({
   return (
     <html lang="tr">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <div className="min-h-screen bg-neutral-50">
+        <div className="min-h-screen">
           <div className="flex">
-            <aside className="sticky top-0 h-screen w-64 shrink-0 border-r border-[var(--border)] bg-white">
+            <aside className="sticky top-0 h-screen w-64 shrink-0 border-r border-[var(--border)] bg-white shadow-sm">
               <div className="flex h-14 items-center justify-between px-4">
-                <Link href="/" className="flex items-center gap-2 font-bold"><span className="inline-block h-5 w-5 rounded bg-zinc-600" /> Shadon UI Kit</Link>
+                <Link href="/" className="flex items-center gap-2">
+                  <span className="inline-block h-5 w-5 rounded bg-gradient-to-b from-blue-600 to-blue-500 dark:from-blue-400 dark:to-blue-300" />
+                  <div className="leading-tight">
+                    <div className="text-sm font-bold">BUMM</div>
+                    <div className="text-[11px] text-blue-700 dark:text-blue-300">Buski Migration Manager</div>
+                  </div>
+                </Link>
               </div>
               <nav className="space-y-6 px-3 py-2 text-sm">
                 <div>
                   <div className="px-2 text-xs font-semibold text-zinc-500">Dashboards</div>
-                  <ul className="mt-2 space-y-1">
-                    <li><Link href="/" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Home className="h-4 w-4" /> Default</Link></li>
-                  </ul>
+                  <SidebarNav items={[{ href: "/", label: "Default", icon: "home", exact: true }]} />
                 </div>
                 <div>
                   <div className="px-2 text-xs font-semibold text-zinc-500">Apps</div>
-                  <ul className="mt-2 space-y-1">
-                    <li><Link href="/projects" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><FolderKanban className="h-4 w-4" /> Projeler</Link></li>
-                    <li><Link href="/kanban" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><FolderKanban className="h-4 w-4" /> Kanban</Link></li>
-                    <li><Link href="/notes" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><NotebookPen className="h-4 w-4" /> Notlar</Link></li>
-                    <li><Link href="/calendar" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Calendar className="h-4 w-4" /> Takvim</Link></li>
-                    <li><Link href="/calendar-copy" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Calendar className="h-4 w-4" /> Takvim (Klon)</Link></li>
-                    <li><Link href="/teams" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Users className="h-4 w-4" /> Takımlar</Link></li>
-                    <li><Link href="/people" className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-neutral-100"><Users className="h-4 w-4" /> Kişiler</Link></li>
-                  </ul>
+                  <SidebarNav
+                    items={[
+                      { href: "/projects", label: "Projeler", icon: "folder-kanban" },
+                      { href: "/tasks", label: "Görevler", icon: "list-todo" },
+                      { href: "/kanban", label: "Kanban", icon: "folder-kanban" },
+                      { href: "/notes", label: "Notlar", icon: "notebook-pen" },
+                      { href: "/calendar", label: "Takvim", icon: "calendar" },
+                      { href: "/calendar-copy", label: "Takvim (Klon)", icon: "calendar" },
+                      { href: "/teams", label: "Takımlar", icon: "users" },
+                      { href: "/people", label: "Kişiler", icon: "users" },
+                    ]}
+                  />
                 </div>
                 
               </nav>
             </aside>
             <div className="flex-1">
-              <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-white/90 backdrop-blur">
+              <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80">
                 <div className="flex items-center justify-between px-2 sm:px-4 lg:px-6 py-3">
                   <div className="flex items-center gap-2">
-                    <Input placeholder="Ara" className="w-64" />
+                    <Input placeholder="Ara" className="w-80" />
                   </div>
                   <div className="flex items-center gap-3">
                     <CommandPalette />
@@ -75,7 +83,9 @@ export default async function RootLayout({
                   </div>
                 </div>
               </header>
-              <Providers>{children}</Providers>
+              <main className="px-2 sm:px-4 lg:px-6 py-4 space-y-6 overflow-x-hidden">
+                <Providers>{children}</Providers>
+              </main>
             </div>
           </div>
         </div>

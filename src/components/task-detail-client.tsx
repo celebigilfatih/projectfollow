@@ -1,11 +1,15 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function TaskDetailClient({ task, users, teams }: { task: any; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string }> }) {
+  const router = useRouter();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [status, setStatus] = useState(task.status);
@@ -15,70 +19,129 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
   const [assigneeIds, setAssigneeIds] = useState<string[]>(Array.isArray(task.assignees) ? task.assignees.map((a: any) => a.userId) : []);
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function save() {
-    await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", body: JSON.stringify({ title, description, status, priority, assignedToId, assignedTeamId, assigneeIds }) });
-    location.reload();
+    try {
+      setSaving(true);
+      const res = await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description, status, priority, assignedToId, assignedTeamId, assigneeIds }) });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success("Görev güncellendi");
+      router.refresh();
+    } catch {
+      toast.error("Kaydetme başarısız");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function addSubtask() {
-    if (!subtaskTitle) return;
-    await fetch(`/api/subtasks`, { method: "POST", body: JSON.stringify({ taskId: task.id, title: subtaskTitle }) });
-    location.reload();
+    if (!subtaskTitle.trim()) return;
+    try {
+      const res = await fetch(`/api/subtasks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId: task.id, title: subtaskTitle }) });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success("Alt görev eklendi");
+      setSubtaskTitle("");
+      router.refresh();
+    } catch {
+      toast.error("Alt görev eklenemedi");
+    }
   }
 
   async function toggleSubtask(id: string, completed: boolean) {
-    await fetch(`/api/subtasks?id=${id}`, { method: "PATCH", body: JSON.stringify({ completed }) });
+    try {
+      const res = await fetch(`/api/subtasks?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completed }) });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success("Alt görev güncellendi");
+      router.refresh();
+    } catch {
+      toast.error("Alt görev güncellenemedi");
+    }
   }
 
   async function addComment() {
-    if (!comment) return;
-    await fetch(`/api/tasks/${task.id}/comment`, { method: "POST", body: JSON.stringify({ content: comment }) });
-    location.reload();
+    if (!comment.trim()) return;
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/comment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: comment }) });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success("Yorum eklendi");
+      setComment("");
+      router.refresh();
+    } catch {
+      toast.error("Yorum eklenemedi");
+    }
   }
 
   async function uploadAttachment(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const form = new FormData();
-    form.append("file", file);
-    form.append("taskId", task.id);
-    await fetch(`/api/attachments`, { method: "POST", body: form });
-    location.reload();
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("taskId", task.id);
+      const res = await fetch(`/api/attachments`, { method: "POST", body: form });
+      if (!res.ok) throw new Error(String(res.status));
+      toast.success("Dosya yüklendi");
+      e.target.value = "";
+      router.refresh();
+    } catch {
+      toast.error("Dosya yüklenemedi");
+    }
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded border bg-white p-4 space-y-2">
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-        <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
-          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="ToDo">To Do</option>
-            <option value="InProgress">In Progress</option>
-            <option value="Waiting">Waiting</option>
-            <option value="Completed">Completed</option>
-          </Select>
-          <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
-            <option value="Low">Low</option>
-            <option value="Medium">Medium</option>
-            <option value="High">High</option>
-            <option value="Critical">Critical</option>
-          </Select>
-          <Select value={assignedToId ?? ""} onChange={(e) => setAssignedToId(e.target.value || undefined)}>
-            <option value="">Atanmadı</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
-            ))}
-          </Select>
-          <Select value={assignedTeamId ?? ""} onChange={(e) => setAssignedTeamId(e.target.value || undefined)}>
-            <option value="">Takım atanmadı</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </Select>
-        </div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle>Görev Detayı</CardTitle>
+        </CardHeader>
+        <div className="space-y-2">
+          <div>
+            <div className="text-xs text-zinc-600 mb-1">Başlık</div>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Görev başlığı" />
+          </div>
+          <div>
+            <div className="text-xs text-zinc-600 mb-1">Açıklama</div>
+            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Açıklama" />
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Durum</div>
+              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="ToDo">Yapılacak</option>
+                <option value="InProgress">Devam Ediyor</option>
+                <option value="Waiting">Beklemede</option>
+                <option value="Completed">Tamamlandı</option>
+              </Select>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Öncelik</div>
+              <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+                <option value="Critical">Critical</option>
+              </Select>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Atanan Kullanıcı</div>
+              <Select value={assignedToId ?? ""} onChange={(e) => setAssignedToId(e.target.value || undefined)}>
+                <option value="">Atanmadı</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Atanan Takım</div>
+              <Select value={assignedTeamId ?? ""} onChange={(e) => setAssignedTeamId(e.target.value || undefined)}>
+                <option value="">Takım atanmadı</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </Select>
+            </div>
+          </div>
           <div>
             <div className="text-xs text-zinc-600 mb-1">Çoklu kişi atama</div>
             <Select
@@ -96,13 +159,15 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
             </Select>
           </div>
           <div className="flex items-end justify-end">
-            <Button onClick={save}>Kaydet</Button>
+            <Button onClick={save} disabled={saving}>{saving ? "Kaydediliyor..." : "Kaydet"}</Button>
           </div>
         </div>
-        
-      </div>
-      <div className="rounded border bg-white p-4 space-y-2">
-        <div className="font-medium">Checklists</div>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Checklists</CardTitle>
+        </CardHeader>
+        <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Input placeholder="Alt görev" value={subtaskTitle} onChange={(e) => setSubtaskTitle(e.target.value)} />
           <Button onClick={addSubtask}>Ekle</Button>
@@ -115,9 +180,13 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
             </li>
           ))}
         </ul>
-      </div>
-      <div className="rounded border bg-white p-4 space-y-2">
-        <div className="font-medium">Yorumlar</div>
+        </div>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Yorumlar</CardTitle>
+        </CardHeader>
+        <div className="space-y-2">
         <Textarea placeholder="Yorum" value={comment} onChange={(e) => setComment(e.target.value)} />
         <Button onClick={addComment}>Gönder</Button>
         <ul className="space-y-2">
@@ -128,9 +197,13 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
             </li>
           ))}
         </ul>
-      </div>
-      <div className="rounded border bg-white p-4 space-y-2">
-        <div className="font-medium">Dosya yükleme</div>
+        </div>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Dosya yükleme</CardTitle>
+        </CardHeader>
+        <div className="space-y-2">
         <input type="file" onChange={uploadAttachment} />
         <ul className="space-y-2">
           {task.attachments.map((a: any) => (
@@ -140,7 +213,8 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
             </li>
           ))}
         </ul>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }

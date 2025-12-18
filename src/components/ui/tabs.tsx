@@ -24,8 +24,8 @@ export function Tabs({ tabs, defaultTab }: { tabs: { id: string; label: string; 
   }, [tabs]);
   return (
     <div>
-      <div className="sticky top-0 z-10 -mx-4 px-4 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-        <div className="flex gap-2 border-b">
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
+        <div className="flex gap-2 border-b border-neutral-200">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -33,7 +33,7 @@ export function Tabs({ tabs, defaultTab }: { tabs: { id: string; label: string; 
             className={twMerge(
               "rounded-full px-3 py-2 text-sm",
               active === t.id
-                ? "bg-neutral-600 text-white shadow-sm"
+                ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
                 : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
             )}
           >
@@ -42,7 +42,7 @@ export function Tabs({ tabs, defaultTab }: { tabs: { id: string; label: string; 
         ))}
         </div>
       </div>
-      <div className="mt-3 rounded-md border bg-white p-4">
+      <div className="mt-3 rounded-md border border-neutral-200 bg-white p-4">
         {tabs.find((t) => t.id === active)?.content}
       </div>
     </div>

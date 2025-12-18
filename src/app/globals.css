@@ -2,13 +2,13 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #3f3f46; /* zinc-700 */
-  --primary: #3f3f46; /* zinc-700 */
+  --foreground: #374151; /* gray-700 */
+  --primary: #2563eb; /* blue-600 */
   --primary-foreground: #ffffff;
-  --muted: #f5f5f5;
+  --muted: #f9fafb; /* gray-50 */
   --muted-foreground: #6b7280; /* gray-500 */
-  --border: #d1d5db; /* gray-300 */
-  --ring: #6b7280; /* gray-500 */
+  --border: #e5e7eb; /* gray-200 */
+  --ring: #60a5fa; /* blue-400 */
 }
 
 @theme inline {
@@ -28,19 +28,21 @@
   :root {
     --background: #0f1115; /* softer than pure black */
     --foreground: #e5e7eb; /* gray-200 */
-    --primary: #e5e7eb;
+    --primary: #93c5fd; /* blue-300 for dark contrast */
     --primary-foreground: #0f1115;
-    --muted: #111111;
+    --muted: #111827; /* gray-900 */
     --muted-foreground: #9ca3af;
-    --border: #374151; /* gray-700 */
-    --ring: #9ca3af; /* gray-400 */
+    --border: #1f2937; /* gray-800 */
+    --ring: #60a5fa; /* blue-400 */
   }
 }
 
 body {
-  background: var(--background);
+  /* Soft dashboard background */
+  background: linear-gradient(to bottom, #f3f4f6, #f9fafb 30%, #ffffff 100%);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
 }
 
 button {

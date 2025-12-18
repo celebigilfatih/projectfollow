@@ -3,10 +3,9 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+ 
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -14,10 +13,9 @@ export default function LoginPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const res = await signIn("credentials", { email, password, redirect: false });
-    if (res?.ok) {
-      router.push("/");
-    } else {
+    try {
+      await signIn("credentials", { email, password, redirect: true, callbackUrl: "/" });
+    } catch {
       setError("Giriş başarısız");
     }
   };

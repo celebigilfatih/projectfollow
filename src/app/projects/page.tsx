@@ -12,7 +12,7 @@ export default async function ProjectsPage() {
   const session = await getServerSession(authConfig as any);
   if (!session) return redirect("/login");
   const [projects, totalProjects, totalTasks, completedTasks] = await Promise.all([
-    prisma.project.findMany({ include: { tasks: true }, orderBy: { updatedAt: "desc" } }),
+    prisma.project.findMany({ include: { tasks: true, responsible: true }, orderBy: { updatedAt: "desc" } }),
     prisma.project.count(),
     prisma.task.count(),
     prisma.task.count({ where: { status: "Completed" as any } }),
@@ -22,21 +22,21 @@ export default async function ProjectsPage() {
     <div className="px-2 sm:px-4 lg:px-6 py-2 sm:py-4 lg:py-6 space-y-6">
       <h1 className="text-2xl font-semibold">Projeler</h1>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Toplam Proje</div>
             <FolderKanban className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{totalProjects}</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Toplam Görev</div>
             <ListTodo className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{totalTasks}</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Tamamlanan Görev %</div>
             <CheckCircle2 className="h-5 w-5 text-neutral-600" />
@@ -72,7 +72,22 @@ export default async function ProjectsPage() {
                   <td className="px-2 sm:px-4 lg:px-6 py-2 text-xs text-zinc-700">{p.tasks.length}</td>
                   <td className="px-2 sm:px-4 lg:px-6 py-2 text-xs text-zinc-700">{new Date(p.updatedAt).toLocaleString()}</td>
                   <td className="px-2 sm:px-4 lg:px-6 py-2">
-                    <ProjectActions project={{ id: p.id, title: p.title, description: p.description, scope: p.scope, status: p.status }} />
+                    <ProjectActions
+                      project={{
+                        id: p.id,
+                        title: p.title,
+                        description: p.description,
+                        scope: p.scope,
+                        status: p.status,
+                        responsible: p.responsible ? { id: p.responsible.id, name: p.responsible.name ?? null, email: p.responsible.email } : null,
+                        startDate: p.startDate ?? null,
+                        endDate: p.endDate ?? null,
+                        createdAt: p.createdAt,
+                        updatedAt: p.updatedAt,
+                        taskCount: p.tasks.length,
+                        completedCount: p.tasks.filter((t) => t.status === ("Completed" as any)).length,
+                      }}
+                    />
                   </td>
                 </tr>
               ))}

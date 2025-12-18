@@ -13,7 +13,7 @@ import KanbanBoard from "@/components/kanban-board";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FolderKanban, ListTodo, CheckCircle2, Calendar, User, Flag, MoreVertical } from "lucide-react";
+import { FolderKanban, ListTodo, CheckCircle2, Calendar, User, Flag, MoreVertical, Download, AlertTriangle, Clock } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import ThemeToggle from "@/components/theme-toggle";
 
@@ -21,7 +21,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   const session = await getServerSession(authConfig as any);
   if (!session) return redirect("/login");
   const { id } = await (params as any);
-  const project = await prisma.project.findUnique({ where: { id }, include: { tasks: true } });
+  const project = await prisma.project.findUnique({ where: { id }, include: { tasks: true, responsible: true } });
   if (!project) return notFound();
   const users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
   const teams = await prisma.team.findMany({ select: { id: true, name: true } });
@@ -29,16 +29,35 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   const total = project.tasks.length;
   const done = project.tasks.filter((t) => t.status === "Completed").length;
   const completedPct = total ? Math.round((done / total) * 100) : 0;
-  const upcoming = project.tasks
-    .filter((t) => t.dueDate && t.dueDate > new Date())
-    .sort((a, b) => (a.dueDate && b.dueDate ? a.dueDate.getTime() - b.dueDate.getTime() : 0))
-    .slice(0, 3);
   const sp = searchParams ? await (searchParams as any) : {};
   const q = sp.q && sp.q !== "" ? sp.q : "";
   const statusFilter = sp.status && sp.status !== "" ? sp.status : "";
   const priorityFilter = sp.priority && sp.priority !== "" ? sp.priority : "";
   const mineFilter = sp.mine && sp.mine !== "" ? true : false;
   const overdueFilter = sp.overdue && sp.overdue !== "" ? true : false;
+  const upcomingLimit = sp.upLimit && !isNaN(Number(sp.upLimit)) ? Math.min(20, Math.max(1, parseInt(sp.upLimit))) : 5;
+  const upcoming = project.tasks
+    .filter((t) => t.dueDate && t.dueDate > new Date())
+    .sort((a, b) => (a.dueDate && b.dueDate ? a.dueDate.getTime() - b.dueDate.getTime() : 0))
+    .slice(0, 3);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysAhead = (d: Date) => Math.floor((new Date(d).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
+  const upcomingActive = project.tasks.filter((t) => t.dueDate && (t.dueDate as any) > now && t.status !== "Completed");
+  const upcomingToday = upcomingActive
+    .filter((t) => daysAhead(t.dueDate as any) === 0)
+    .sort((a, b) => ((a.dueDate as any).getTime() - (b.dueDate as any).getTime()))
+    .slice(0, upcomingLimit);
+  const upcoming3d = upcomingActive
+    .filter((t) => { const d = daysAhead(t.dueDate as any); return d > 0 && d <= 3; })
+    .sort((a, b) => ((a.dueDate as any).getTime() - (b.dueDate as any).getTime()))
+    .slice(0, upcomingLimit);
+  const upcoming1w = upcomingActive
+    .filter((t) => { const d = daysAhead(t.dueDate as any); return d > 3 && d <= 7; })
+    .sort((a, b) => ((a.dueDate as any).getTime() - (b.dueDate as any).getTime()))
+    .slice(0, upcomingLimit);
+  const overdueCount = project.tasks.filter((t) => t.dueDate && t.dueDate < new Date() && t.status !== "Completed").length;
+  const criticalCount = project.tasks.filter((t) => t.priority === "Critical").length;
   const tasks = await prisma.task.findMany({
     where: {
       projectId: id,
@@ -57,32 +76,203 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
       label: "Genel",
       content: (
         <div className="space-y-4">
-          <Card className="bg-gradient-to-r from-neutral-50 to-white dark:from-neutral-900 dark:to-neutral-800">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm text-zinc-700">{project.description}</div>
+          <div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-3">
+                <div className="rounded-md border border-[var(--border)] bg-white">
+                  <CardHeader>
+                    <CardTitle className="text-sm">Açıklama</CardTitle>
+                  </CardHeader>
+                  <div className="px-3 pb-3 text-sm text-zinc-700 whitespace-pre-line">{project.description ?? "-"}</div>
+                </div>
+                <div className="rounded-md border border-[var(--border)] bg-white">
+                  <CardHeader>
+                    <CardTitle className="text-sm">Kapsam</CardTitle>
+                  </CardHeader>
+                  <div className="px-3 pb-3 text-sm text-zinc-700">
+                    {(() => {
+                      const txt = project.scope?.trim();
+                      const tokens = txt && txt.includes(",") ? txt.split(",").map((s) => s.trim()).filter(Boolean) : [];
+                      if (tokens.length === 0) return <div className="whitespace-pre-line">{txt ?? "-"}</div>;
+                      return (
+                        <div className="flex flex-wrap gap-2">
+                          {tokens.map((t) => (
+                            <Link key={t} href={`/projects/${project.id}?q=${encodeURIComponent(t)}#overview`} className="inline-flex">
+                              <Badge className="bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200">{t}</Badge>
+                            </Link>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3 text-xs text-zinc-600">
-                <span>Durum: {project.status}</span>
-                <span>Toplam {total}</span>
-                <span>Tamamlanan {done}</span>
-                <span>%{completedPct}</span>
-                {upcoming[0] ? <span>Yaklaşan: {upcoming[0].dueDate?.toLocaleDateString()}</span> : null}
+              <div className="space-y-3">
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="text-sm font-bold mb-2">Özet</div>
+                  <div className="space-y-3 text-sm text-zinc-700">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                        <div className="text-xs text-zinc-600">Durum</div>
+                        <div className="mt-1"><Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge></div>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                        <div className="text-xs text-zinc-600">Sorumlu</div>
+                        <div className="mt-1">{project.responsible?.name ?? project.responsible?.email ?? "-"}</div>
+                      </div>
+                      <Link href={`/projects/${project.id}#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-zinc-600">Toplam</div>
+                            <div className="mt-1 font-medium">{total}</div>
+                          </div>
+                          <ListTodo className="h-4 w-4 text-neutral-600" />
+                        </div>
+                      </Link>
+                      <Link href={`/projects/${project.id}?status=Completed#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-zinc-600">Tamamlanan</div>
+                            <div className="mt-1 font-medium">{done} • %{completedPct}</div>
+                          </div>
+                          <CheckCircle2 className="h-4 w-4 text-neutral-600" />
+                        </div>
+                      </Link>
+                      <Link href={`/projects/${project.id}?priority=Critical#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-zinc-600">Kritik</div>
+                            <div className="mt-1 font-medium">{criticalCount}</div>
+                          </div>
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                        </div>
+                      </Link>
+                      <Link href={`/projects/${project.id}?overdue=1#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-zinc-600">Geciken</div>
+                            <div className="mt-1 font-medium">{overdueCount}</div>
+                          </div>
+                          <Clock className="h-4 w-4 text-amber-600" />
+                        </div>
+                      </Link>
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs text-zinc-600">Yaklaşan Görevler</span>
+                        <form
+                          className="flex items-center gap-2"
+                          action={async (formData: FormData) => {
+                            "use server";
+                            const qs = new URLSearchParams();
+                            const val = String(formData.get("upLimit") || "");
+                            if (q) qs.set("q", q);
+                            if (statusFilter) qs.set("status", statusFilter);
+                            if (priorityFilter) qs.set("priority", priorityFilter);
+                            if (mineFilter) qs.set("mine", "1");
+                            if (overdueFilter) qs.set("overdue", "1");
+                            if (val) qs.set("upLimit", val);
+                            return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
+                          }}
+                        >
+                          <select name="upLimit" defaultValue={String(upcomingLimit)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                            <option value="3">3</option>
+                            <option value="5">5</option>
+                            <option value="10">10</option>
+                          </select>
+                          <Button type="submit" variant="outline" size="sm" className="text-[10px] px-2">Ayarla</Button>
+                        </form>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                        <div>
+                          <div className="mb-1 text-xs text-zinc-600">Bugün</div>
+                          <div className="space-y-1">
+                            {upcomingToday.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcomingToday.map((t) => (
+                              <div key={t.id} className="flex items-center justify-between gap-2">
+                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <div className="flex items-center gap-2">
+                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
+                                  <span className="text-xs text-zinc-500">{t.priority}</span>
+                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs text-zinc-600">+3 gün</div>
+                          <div className="space-y-1">
+                            {upcoming3d.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming3d.map((t) => (
+                              <div key={t.id} className="flex items-center justify-between gap-2">
+                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <div className="flex items-center gap-2">
+                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
+                                  <span className="text-xs text-zinc-500">{t.priority}</span>
+                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs text-zinc-600">+1 hafta</div>
+                          <div className="space-y-1">
+                            {upcoming1w.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming1w.map((t) => (
+                              <div key={t.id} className="flex items-center justify-between gap-2">
+                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <div className="flex items-center gap-2">
+                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
+                                  <span className="text-xs text-zinc-500">{t.priority}</span>
+                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-md border border-neutral-200 bg-white">
+                  <CardHeader>
+                    <CardTitle className="text-sm">Zaman ve Kayıt</CardTitle>
+                  </CardHeader>
+                  <div className="px-3 pb-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                      <div className="flex items-center gap-2 text-xs text-zinc-600"><Calendar className="h-4 w-4" />Başlangıç</div>
+                      <div className="text-sm">{project.startDate ? new Date(project.startDate).toLocaleString() : "-"}</div>
+                    </div>
+                    <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                      <div className="flex items-center gap-2 text-xs text-zinc-600"><Calendar className="h-4 w-4" />Bitiş</div>
+                      <div className="text-sm">{project.endDate ? new Date(project.endDate).toLocaleString() : "-"}</div>
+                    </div>
+                    <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                      <div className="flex items-center gap-2 text-xs text-zinc-600"><Clock className="h-4 w-4" />Oluşturulma</div>
+                      <div className="text-sm">{new Date(project.createdAt as any).toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-md border border-[var(--border)] bg-white p-2">
+                      <div className="flex items-center gap-2 text-xs text-zinc-600"><Clock className="h-4 w-4" />Güncelleme</div>
+                      <div className="text-sm">{new Date(project.updatedAt as any).toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </Card>
-          <Card className="bg-gradient-to-r from-neutral-50 to-white dark:from-neutral-900 dark:to-neutral-800">
+          </div>
+          <Timeline projectId={project.id} />
+          <Card className="bg-gradient-to-r from-neutral-50 to-white dark:from-neutral-900 dark:to-neutral-800 p-3 sm:p-4">
             <CardHeader>
               <CardTitle>Görevler</CardTitle>
             </CardHeader>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-zinc-600">Yeni görev ekle</div>
+              <div className="flex items-center justify-end">
                 <QuickTaskModal projectId={project.id} users={users} teams={teams} />
               </div>
             </div>
-            <form
-              className="mt-3 flex flex-wrap items-end gap-2"
+            <details className="mt-3 rounded-md border border-neutral-200 bg-white" open>
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-bold text-zinc-800">Filtreler</summary>
+              <form
+              className="px-3 pb-3 flex flex-nowrap items-end gap-2 overflow-x-auto whitespace-nowrap"
               action={async (formData: FormData) => {
                 "use server";
                 const qs = new URLSearchParams();
@@ -118,9 +308,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   Son tarihi geçen
                 </label>
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">Durum</label>
-                <select name="status" defaultValue={statusFilter} className="w-40 rounded border px-3 py-2 text-sm">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-zinc-600">Durum</label>
+                <select name="status" defaultValue={statusFilter} className="w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
                   <option value="">Tümü</option>
                   <option value="ToDo">Yapılacak</option>
                   <option value="InProgress">Devam Ediyor</option>
@@ -128,9 +318,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   <option value="Completed">Tamamlandı</option>
                 </select>
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">Öncelik</label>
-                <select name="priority" defaultValue={priorityFilter} className="w-40 rounded border px-3 py-2 text-sm">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-zinc-600">Öncelik</label>
+                <select name="priority" defaultValue={priorityFilter} className="w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
                   <option value="">Tümü</option>
                   <option value="Low">Low</option>
                   <option value="Medium">Medium</option>
@@ -143,16 +333,23 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 <Button type="submit" name="reset" value="1" variant="ghost" size="sm">Temizle</Button>
               </div>
             </form>
-            <form
-              className="mt-3 space-y-2"
+            </details>
+            <details className="mt-3 rounded-md border border-neutral-200 bg-white" open>
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-bold text-zinc-800">Toplu İşlemler</summary>
+              <form
+              className="px-3 pb-3 overflow-x-auto whitespace-nowrap"
               action={async (formData: FormData) => {
                 "use server";
-                const ids = formData.getAll("ids").map((x) => String(x)).filter(Boolean);
+                const applyAll = formData.get("applyAll");
+                let ids = formData.getAll("ids").map((x) => String(x)).filter(Boolean);
                 const op = String(formData.get("op") || "");
                 const qs = new URLSearchParams();
                 if (q) qs.set("q", q);
                 if (statusFilter) qs.set("status", statusFilter);
                 if (priorityFilter) qs.set("priority", priorityFilter);
+                if (applyAll) {
+                  ids = tasks.map((t) => t.id);
+                }
                 if (ids.length === 0) {
                   return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
                 }
@@ -171,11 +368,21 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 } else if (op === "unassign") {
                   await post(`/api/tasks/bulk/assign`, { ids, assignedToId: null, assignedTeamId: null });
                 } else if (op === "due") {
-                  const dueDate = String(formData.get("bulkDue") || "");
+                  const rawDue = String(formData.get("bulkDue") || "");
+                  let dueDate = rawDue;
+                  const m = rawDue.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+                  if (m) {
+                    const [, dd, mm, yyyy] = m as any;
+                    dueDate = `${yyyy}-${mm}-${dd}`;
+                  }
                   await post(`/api/tasks/bulk/due`, { ids, dueDate });
                 } else if (op === "due_clear") {
                   await post(`/api/tasks/bulk/due`, { ids, dueDate: "" });
                 } else if (op === "delete") {
+                  const conf = formData.get("confirmDelete");
+                  if (!conf) {
+                    return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
+                  }
                   await post(`/api/tasks/bulk/delete`, { ids });
                 } else if (op === "due_rel_today" || op === "due_rel_3d" || op === "due_rel_1w") {
                   const base = new Date();
@@ -188,53 +395,65 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
               }}
             >
-              <div className="rounded border bg-white p-2">
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-nowrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-zinc-600">İşlem</label>
+                    <select name="op" className="w-48 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                      <option value="status">Durum</option>
+                      <option value="priority">Öncelik</option>
+                      <option value="assign">Atama</option>
+                      <option value="unassign">Atamayı kaldır</option>
+                      <option value="due">Son tarih ayarla</option>
+                      <option value="due_clear">Son tarih kaldır</option>
+                      <option value="due_rel_today">Son tarih bugün</option>
+                      <option value="due_rel_3d">Son tarih +3 gün</option>
+                      <option value="due_rel_1w">Son tarih +1 hafta</option>
+                      <option value="delete">Sil</option>
+                    </select>
+                  </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Durum</label>
-                    <select name="bulkStatus" className="rounded border px-2 py-1 text-xs">
+                    <select name="bulkStatus" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Seçiniz</option>
                       <option value="ToDo">Yapılacak</option>
                       <option value="InProgress">Devam Ediyor</option>
                       <option value="Waiting">Beklemede</option>
                       <option value="Completed">Tamamlandı</option>
                     </select>
-                    <Button type="submit" name="op" value="status" variant="outline" size="sm" className="text-xs">Uygula</Button>
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Öncelik</label>
-                    <select name="bulkPriority" className="rounded border px-2 py-1 text-xs">
+                    <select name="bulkPriority" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Seçiniz</option>
                       <option value="Low">Low</option>
                       <option value="Medium">Medium</option>
                       <option value="High">High</option>
                       <option value="Critical">Critical</option>
                     </select>
-                    <Button type="submit" name="op" value="priority" variant="outline" size="sm" className="text-xs">Uygula</Button>
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Atama</label>
-                    <select name="bulkAssignTo" className="rounded border px-2 py-1 text-xs">
+                    <select name="bulkAssignTo" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Yok</option>
                       {users.map((u) => (
                         <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
                       ))}
                     </select>
-                    <Button type="submit" name="op" value="assign" variant="outline" size="sm" className="text-xs">Ata</Button>
-                    <Button type="submit" name="op" value="unassign" variant="outline" size="sm" className="text-xs">Kaldır</Button>
                   </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-zinc-600">Son tarih</label>
-                <input type="date" name="bulkDue" className="rounded border px-2 py-1 text-xs" />
-                <Button type="submit" name="op" value="due" variant="outline" size="sm" className="text-xs">Ayarla</Button>
-                <Button type="submit" name="op" value="due_clear" variant="outline" size="sm" className="text-xs">Kaldır</Button>
-                <Button type="submit" name="op" value="due_rel_today" variant="outline" size="sm" className="text-xs">Bugün</Button>
-                <Button type="submit" name="op" value="due_rel_3d" variant="outline" size="sm" className="text-xs">+3 gün</Button>
-                <Button type="submit" name="op" value="due_rel_1w" variant="outline" size="sm" className="text-xs">+1 hafta</Button>
-              </div>
                   <div className="flex items-center gap-2">
-                    <Button type="submit" name="op" value="delete" variant="destructive" size="sm" className="text-xs">Sil</Button>
+                    <label className="text-xs text-zinc-600">Son tarih</label>
+                    <input type="text" name="bulkDue" placeholder="gg.aa.yyyy" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs" />
                   </div>
+                  <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs text-zinc-600 bg-neutral-50">
+                    <input type="checkbox" name="applyAll" className="h-4 w-4" />
+                    Listelenen tüm görevlerde uygula
+                  </label>
+                  <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs text-red-600 bg-red-50">
+                    <input type="checkbox" name="confirmDelete" className="h-4 w-4" />
+                    Silmeyi onaylıyorum
+                  </label>
+                  <Button type="submit" variant="outline" size="sm" className="text-xs">Uygula</Button>
                 </div>
               </div>
               <div className="mt-2 overflow-x-auto">
@@ -375,6 +594,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 </table>
               </div>
             </form>
+            </details>
           </Card>
         </div>
       ),
@@ -407,30 +627,48 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   ];
 
   return (
-    <div className="px-2 sm:px-4 lg:px-6 py-2 sm:py-4 lg:py-6 space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold truncate">{project.title}</h1>
-          <div className="mt-2 flex items-center gap-2">
-            <Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge>
-            <span className="text-sm text-zinc-600">Toplam {total} • Tamamlanan {done} • %{completedPct}</span>
+    <div className="space-y-6 overflow-x-hidden">
+      <div className="sticky top-0 z-10 px-2 sm:px-4 lg:px-6 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80 border-b border-[var(--border)] dark:bg-neutral-900/95 dark:supports-[backdrop-filter]:bg-neutral-900/80 dark:border-neutral-800">
+        <div className="flex items-center justify-between py-2 gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold truncate">{project.title}</h1>
+            <div className="mt-1 flex items-center gap-2">
+              <Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge>
+              <span className="text-sm text-zinc-600">Toplam {total} • Tamamlanan {done} • %{completedPct}</span>
+            </div>
+            <div className="mt-2 max-w-2xl"><Progress value={completedPct} /></div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href={`/projects/${project.id}#kanban`} className="rounded border px-3 py-2 text-sm">Kanban</Link>
-          <Link href={`/projects/${project.id}#overview`} className="rounded border px-3 py-2 text-sm">Görevler</Link>
-          <ThemeToggle />
+          <div className="ml-auto flex items-center gap-2">
+            <QuickTaskModal projectId={project.id} users={users} teams={teams} label="Görev Ekle" />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="flex items-center gap-1"><MoreVertical className="h-4 w-4" />İşlemler</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem asChild>
+                  <Link href={`/api/export/tasks?projectId=${project.id}&view=all`} className="flex items-center gap-2"><Download className="h-4 w-4" />CSV (Tümü)</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/projects/${project.id}#kanban`} className="flex items-center gap-2"><FolderKanban className="h-4 w-4" />Kanban’a git</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href={`/projects/${project.id}#overview`} className="flex items-center gap-2">Görevler</Link>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <ThemeToggle />
+          </div>
         </div>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200 p-3 sm:p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Toplam Görev</div>
             <ListTodo className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 text-2xl font-semibold">{total}</div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200 p-3 sm:p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Tamamlanan</div>
             <CheckCircle2 className="h-5 w-5 text-neutral-600" />
@@ -440,7 +678,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             <Progress value={completedPct} />
           </div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200 p-3 sm:p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Yaklaşan</div>
             <Calendar className="h-5 w-5 text-neutral-600" />
@@ -454,7 +692,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             ))}
           </div>
         </Card>
-        <Card className="transition duration-200 hover:shadow-md hover:-translate-y-0.5">
+        <Card className="transition duration-200 p-3 sm:p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Kanban</div>
             <FolderKanban className="h-5 w-5 text-neutral-600" />
@@ -474,7 +712,7 @@ async function Timeline({ projectId }: { projectId: string }) {
   const tasks = await prisma.task.findMany({ where: { projectId }, orderBy: { startDate: "asc" } });
   const min = tasks.reduce<Date | null>((acc, t) => (!acc || (t.startDate && t.startDate < acc) ? t.startDate ?? acc : acc), null) ?? new Date();
   return (
-    <Card>
+    <Card className="p-3 sm:p-4">
       <CardHeader>
         <CardTitle>Timeline</CardTitle>
       </CardHeader>
@@ -483,12 +721,20 @@ async function Timeline({ projectId }: { projectId: string }) {
           const start = t.startDate ?? min;
           const end = t.dueDate ?? start;
           const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+          const barClass = t.priority === "Critical"
+            ? "bg-red-600"
+            : t.priority === "High"
+              ? "bg-amber-500"
+              : t.priority === "Medium"
+                ? "bg-indigo-600"
+                : "bg-neutral-500";
           return (
-            <div key={t.id} className="flex items-center gap-2">
-              <span className="w-48 text-sm">{t.title}</span>
+            <div key={t.id} className="flex items-center gap-2" title={`${days} gün`}>
+              <Link href={`/tasks/${t.id}`} className="w-48 text-sm truncate hover:underline">{t.title}</Link>
               <div className="flex-1">
-                <Progress value={Math.min(100, days * 5)} />
+                <Progress value={Math.min(100, days * 5)} barClassName={barClass} />
               </div>
+              <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
             </div>
           );
         })}
@@ -516,7 +762,7 @@ function ExchangeMigrationTab({ projectId, project }: { projectId: string; proje
 
 function ProjectExtraFields({ projectId, fields }: { projectId: string; fields: Record<string, string> }) {
   return (
-    <Card>
+    <Card className="p-3 sm:p-4">
       <CardHeader>
         <CardTitle>Ek Alanlar</CardTitle>
       </CardHeader>
