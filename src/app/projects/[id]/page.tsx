@@ -14,7 +14,7 @@ import KanbanBoard from "@/components/kanban-board";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FolderKanban, ListTodo, CheckCircle2, Calendar, MoreVertical, Download, AlertTriangle, Clock, Plus, Trash2 } from "lucide-react";
+import { FolderKanban, ListTodo, CheckCircle2, Calendar, MoreVertical, Download, AlertTriangle, Clock, Plus, Trash2, ArrowUpDown, ChevronUp, ChevronDown } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import TaskRowActions from "@/components/task-row-actions";
@@ -76,10 +76,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   const mineFilter = sp.mine && sp.mine !== "" ? true : false;
   const overdueFilter = sp.overdue && sp.overdue !== "" ? true : false;
   const upcomingLimit = sp.upLimit && !isNaN(Number(sp.upLimit)) ? Math.min(20, Math.max(1, parseInt(sp.upLimit))) : 5;
-  const upcoming = project.tasks
-    .filter((t) => t.dueDate && t.dueDate > new Date())
-    .sort((a, b) => (a.dueDate && b.dueDate ? a.dueDate.getTime() - b.dueDate.getTime() : 0))
-    .slice(0, 3);
+  const tlSort = sp.tlSort && sp.tlSort !== "" ? sp.tlSort : "phase_start";
+  const tlDir = sp.tlDir === "desc" ? "desc" : "asc";
+  // upcoming tiles use categorized buckets below
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const daysAhead = (d: Date) => Math.floor((new Date(d).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
@@ -98,6 +97,30 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
     .slice(0, upcomingLimit);
   const overdueCount = project.tasks.filter((t) => t.dueDate && t.dueDate < new Date() && t.status !== "Completed").length;
   const criticalCount = project.tasks.filter((t) => t.priority === "Critical").length;
+  const toDoCount = project.tasks.filter((t) => t.status === "ToDo").length;
+  const inProgressCount = project.tasks.filter((t) => t.status === "InProgress").length;
+  const waitingCount = project.tasks.filter((t) => t.status === "Waiting").length;
+  const lowCount = project.tasks.filter((t) => t.priority === "Low").length;
+  const mediumCount = project.tasks.filter((t) => t.priority === "Medium").length;
+  const highCount = project.tasks.filter((t) => t.priority === "High").length;
+  const statusBar = {
+    done: total ? Math.round((done / total) * 100) : 0,
+    inProgress: total ? Math.round((inProgressCount / total) * 100) : 0,
+    waiting: total ? Math.round((waitingCount / total) * 100) : 0,
+    toDo: total ? Math.round((toDoCount / total) * 100) : 0,
+  };
+  const priorityBar = {
+    critical: total ? Math.round((criticalCount / total) * 100) : 0,
+    high: total ? Math.round((highCount / total) * 100) : 0,
+    medium: total ? Math.round((mediumCount / total) * 100) : 0,
+    low: total ? Math.round((lowCount / total) * 100) : 0,
+  };
+  const upcomingTotal = upcomingActive.length;
+  const upcomingPct = {
+    today: upcomingTotal ? Math.round((upcomingToday.length / upcomingTotal) * 100) : 0,
+    three: upcomingTotal ? Math.round((upcoming3d.length / upcomingTotal) * 100) : 0,
+    week: upcomingTotal ? Math.round((upcoming1w.length / upcomingTotal) * 100) : 0,
+  };
   const managerTeamIds = managerFilter ? teams.filter((t) => Array.isArray(t.members) && t.members.some((m: any) => m.userId === managerFilter && (m.role === "Lead" || m.role === "Manager"))).map((t) => t.id) : [];
   let tasks: any[] = [];
   try {
@@ -125,162 +148,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
       content: (
         <div className="space-y-4">
           <div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-1">
               <div className="space-y-3">
-                <div className="rounded-md border border-[var(--border)] bg-white">
-                  <CardHeader className="px-4 pt-4">
-                    <CardTitle className="text-sm font-bold">Açıklama</CardTitle>
-                  </CardHeader>
-                  <div className="px-4 pb-4 text-sm text-zinc-700 whitespace-pre-line">{project.description ?? "-"}</div>
-                </div>
-                <div className="rounded-md border border-[var(--border)] bg-white">
-                  <CardHeader className="px-4 pt-4">
-                    <CardTitle className="text-sm font-bold">Kapsam</CardTitle>
-                  </CardHeader>
-                  <div className="px-4 pb-4 text-sm text-zinc-700">
-                    {(() => {
-                      const txt = project.scope?.trim();
-                      const tokens = txt && txt.includes(",") ? txt.split(",").map((s) => s.trim()).filter(Boolean) : [];
-                      if (tokens.length === 0) return <div className="whitespace-pre-line">{txt ?? "-"}</div>;
-                      return (
-                        <div className="flex flex-wrap gap-2">
-                          {tokens.map((t) => (
-                            <Link key={t} href={`/projects/${project.id}?q=${encodeURIComponent(t)}#overview`} className="inline-flex max-w-full">
-                              <Badge className="bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200 break-all max-w-full">{t}</Badge>
-                            </Link>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className="rounded-md border border-neutral-200 bg-white p-3">
-                  <div className="text-sm font-bold mb-2">Özet</div>
-                  <div className="space-y-3 text-sm text-zinc-700">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-md border border-[var(--border)] bg-white p-2">
-                        <div className="text-xs text-zinc-600">Durum</div>
-                        <div className="mt-1"><Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge></div>
-                      </div>
-                      <div className="rounded-md border border-[var(--border)] bg-white p-2">
-                        <div className="text-xs text-zinc-600">Sorumlu</div>
-                        <div className="mt-1">{project.responsible?.name ?? project.responsible?.email ?? "-"}</div>
-                      </div>
-                      <Link href={`/projects/${project.id}#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-zinc-600">Toplam</div>
-                            <div className="mt-1 font-medium">{total}</div>
-                          </div>
-                          <ListTodo className="h-4 w-4 text-neutral-600" />
-                        </div>
-                      </Link>
-                      <Link href={`/projects/${project.id}?status=Completed#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-zinc-600">Tamamlanan</div>
-                            <div className="mt-1 font-medium">{done} • %{completedPct}</div>
-                          </div>
-                          <CheckCircle2 className="h-4 w-4 text-neutral-600" />
-                        </div>
-                      </Link>
-                      <Link href={`/projects/${project.id}?priority=Critical#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-zinc-600">Kritik</div>
-                            <div className="mt-1 font-medium">{criticalCount}</div>
-                          </div>
-                          <AlertTriangle className="h-4 w-4 text-red-600" />
-                        </div>
-                      </Link>
-                      <Link href={`/projects/${project.id}?overdue=1#overview`} className="rounded-md border border-[var(--border)] bg-white p-2 transition hover:bg-neutral-50">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-zinc-600">Geciken</div>
-                            <div className="mt-1 font-medium">{overdueCount}</div>
-                          </div>
-                          <Clock className="h-4 w-4 text-amber-600" />
-                        </div>
-                      </Link>
-                    </div>
-                    <div>
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="text-xs text-zinc-600">Yaklaşan Görevler</span>
-                        <form
-                          className="flex items-center gap-2"
-                          action={async (formData: FormData) => {
-                            "use server";
-                            const qs = new URLSearchParams();
-                            const val = String(formData.get("upLimit") || "");
-                            if (q) qs.set("q", q);
-                            if (statusFilter) qs.set("status", statusFilter);
-                            if (priorityFilter) qs.set("priority", priorityFilter);
-                            if (mineFilter) qs.set("mine", "1");
-                            if (overdueFilter) qs.set("overdue", "1");
-                            if (val) qs.set("upLimit", val);
-                            return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
-                          }}
-                        >
-                          <select name="upLimit" defaultValue={String(upcomingLimit)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
-                            <option value="3">3</option>
-                            <option value="5">5</option>
-                            <option value="10">10</option>
-                          </select>
-                          <Button type="submit" variant="outline" size="sm" className="text-[10px] px-2">Ayarla</Button>
-                        </form>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                        <div>
-                          <div className="mb-1 text-xs text-zinc-600">Bugün</div>
-                          <div className="space-y-1">
-                            {upcomingToday.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcomingToday.map((t) => (
-                              <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
-                                <div className="flex items-center gap-2">
-                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
-                                  <span className="text-xs text-zinc-500">{t.priority}</span>
-                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs text-zinc-600">+3 gün</div>
-                          <div className="space-y-1">
-                            {upcoming3d.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming3d.map((t) => (
-                              <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
-                                <div className="flex items-center gap-2">
-                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
-                                  <span className="text-xs text-zinc-500">{t.priority}</span>
-                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs text-zinc-600">+1 hafta</div>
-                          <div className="space-y-1">
-                            {upcoming1w.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming1w.map((t) => (
-                              <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
-                                <div className="flex items-center gap-2">
-                                  <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
-                                  <span className="text-xs text-zinc-500">{t.priority}</span>
-                                  <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
                 <div className="rounded-md border border-neutral-200 bg-white">
                   <CardHeader>
                     <CardTitle className="text-sm font-bold">Zaman ve Kayıt</CardTitle>
@@ -307,7 +176,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
               </div>
             </div>
           </div>
-          <Timeline projectId={project.id} />
+          <Timeline projectId={project.id} tlSort={tlSort} tlDir={tlDir} users={users} teams={teams} />
+          {id !== "97c58258-f2d4-4deb-9bce-5dbcff199569" && (
           <Card className="bg-gradient-to-r from-neutral-50 to-white dark:from-neutral-900 dark:to-neutral-800 p-3 sm:p-4">
             <CardHeader>
               <CardTitle className="font-bold">Görevler</CardTitle>
@@ -1452,6 +1322,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             </details>
             </TooltipProvider>
           </Card>
+          )}
         </div>
       ),
     },
@@ -1468,7 +1339,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
     {
       id: "timeline",
       label: "Timeline",
-      content: <Timeline projectId={project.id} />,
+      content: <Timeline projectId={project.id} tlSort={tlSort} tlDir={tlDir} users={users} teams={teams} />,
     },
     {
       id: "domain",
@@ -1490,7 +1361,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             <h1 className="text-2xl font-semibold break-words whitespace-normal">{project.title}</h1>
             <div className="mt-1 flex items-center gap-2">
               <Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge>
-              <span className="text-sm text-zinc-600">Toplam {total} • Tamamlanan {done} • %{completedPct}</span>
+              <span className="text-sm text-zinc-600">Toplam {total} • Tamamlanan {done} • {completedPct}%</span>
             </div>
             <div className="mt-2 max-w-2xl"><Progress value={completedPct} /></div>
           </div>
@@ -1516,55 +1387,164 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <Card className="transition duration-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-zinc-600">Toplam Görev</div>
-            <ListTodo className="h-5 w-5 text-neutral-600" />
-          </div>
-          <div className="mt-1 text-2xl font-semibold">{total}</div>
-        </Card>
-        <Card className="transition duration-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-zinc-600">Tamamlanan</div>
-            <CheckCircle2 className="h-5 w-5 text-neutral-600" />
-          </div>
-          <div className="mt-1 text-2xl font-semibold">{done}</div>
-          <div className="mt-2">
-            <Progress value={completedPct} />
+      <div className="grid grid-cols-1 gap-4">
+          <Card className="transition duration-200 p-3 sm:p-4">
+            <CardHeader>
+              <CardTitle className="font-bold">Özet</CardTitle>
+              <div className="mt-1 text-xs text-zinc-600">{completedPct}% tamamlanma • {criticalCount} kritik • {overdueCount} geciken</div>
+            </CardHeader>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-zinc-600">Durum</div>
+                  </div>
+                  <div className="mt-1">
+                    <Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge>
+                  </div>
+                  <div className="mt-2">
+                    <div className="flex h-2 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+                      <div style={{ width: `${statusBar.done}%` }} className="bg-green-600" />
+                      <div style={{ width: `${statusBar.inProgress}%` }} className="bg-indigo-600" />
+                      <div style={{ width: `${statusBar.waiting}%` }} className="bg-amber-500" />
+                      <div style={{ width: `${statusBar.toDo}%` }} className="bg-zinc-600" />
+                    </div>
+                    <div className="mt-1 text-[10px] text-zinc-500">Tamamlanan {statusBar.done}% • Devam {statusBar.inProgress}% • Beklemede {statusBar.waiting}% • Yapılacak {statusBar.toDo}%</div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-zinc-600">
+                      <Badge className="bg-green-100 border-green-200 text-green-700 dark:bg-green-900 dark:border-green-800 dark:text-green-300">Tamamlanan</Badge>
+                      <Badge className="bg-indigo-100 border-indigo-200 text-indigo-700 dark:bg-indigo-900 dark:border-indigo-800 dark:text-indigo-300">Devam</Badge>
+                      <Badge className="bg-amber-100 border-amber-200 text-amber-700 dark:bg-amber-900 dark:border-amber-800 dark:text-amber-300">Beklemede</Badge>
+                      <Badge className="bg-zinc-100 border-zinc-200 text-zinc-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300">Yapılacak</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="text-sm text-zinc-600">Sorumlu</div>
+                  <div className="mt-1 text-sm">{project.responsible?.name ?? project.responsible?.email ?? "-"}</div>
+                </div>
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-zinc-600">Kanban</div>
+                    <FolderKanban className="h-5 w-5 text-neutral-600" />
+                  </div>
+                  <div className="mt-1 text-sm text-zinc-700">Durum: {project.status}</div>
+                  <div className="mt-2">
+                    <Link href={`/projects/${project.id}#kanban`} className="rounded border px-2 py-1 text-xs">Aç</Link>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-zinc-600">Toplam</div>
+                    <ListTodo className="h-5 w-5 text-neutral-600" />
+                  </div>
+                  <div className="mt-1 text-2xl font-semibold">{total}</div>
+                </div>
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-zinc-600">Tamamlanan</div>
+                    <CheckCircle2 className="h-5 w-5 text-neutral-600" />
+                  </div>
+                  <div className="mt-1 text-2xl font-semibold">{done}</div>
+                  <div className="mt-2"><Progress value={completedPct} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-md border border-neutral-200 bg-white p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-zinc-600">Kritik</div>
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold">{criticalCount}</div>
+                    <div className="mt-2"><Progress value={total ? Math.round((criticalCount / total) * 100) : 0} /></div>
+                  </div>
+                  <div className="rounded-md border border-neutral-200 bg-white p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-zinc-600">Geçiken</div>
+                      <Clock className="h-5 w-5 text-amber-500" />
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold">{overdueCount}</div>
+                    <div className="mt-2"><Progress value={total ? Math.round((overdueCount / total) * 100) : 0} /></div>
+                  </div>
+                  <div className="col-span-2 rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="text-sm text-zinc-600">Öncelik Dağılımı</div>
+                    <div className="mt-2 flex h-2 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+                      <div style={{ width: `${priorityBar.critical}%` }} className="bg-red-600" />
+                      <div style={{ width: `${priorityBar.high}%` }} className="bg-amber-500" />
+                      <div style={{ width: `${priorityBar.medium}%` }} className="bg-zinc-600" />
+                      <div style={{ width: `${priorityBar.low}%` }} className="bg-neutral-400" />
+                    </div>
+                    <div className="mt-1 text-[10px] text-zinc-500">Critical {priorityBar.critical}% • High {priorityBar.high}% • Medium {priorityBar.medium}% • Low {priorityBar.low}%</div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-zinc-600">
+                    <Badge className="bg-red-100 border-red-200 text-red-700 dark:bg-red-900 dark:border-red-800 dark:text-red-300">Critical</Badge>
+                    <Badge className="bg-amber-100 border-amber-200 text-amber-700 dark:bg-amber-900 dark:border-amber-800 dark:text-amber-300">High</Badge>
+                    <Badge className="bg-zinc-100 border-zinc-200 text-zinc-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300">Medium</Badge>
+                    <Badge className="bg-neutral-100 border-neutral-200 text-neutral-700 dark:bg-neutral-900 dark:border-neutral-800 dark:text-neutral-300">Low</Badge>
+                  </div>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border border-neutral-200 bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-zinc-600">Yaklaşan Görevler</div>
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const up = String(formData.get("upLimit") || "");
+                        const qs = new URLSearchParams();
+                        if (up) qs.set("upLimit", up);
+                        return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <select name="upLimit" defaultValue={String(upcomingLimit)} className="rounded border px-2 py-1 text-xs">
+                          <option value="3">3</option>
+                          <option value="5">5</option>
+                          <option value="10">10</option>
+                        </select>
+                        <Button type="submit" variant="outline" size="sm" className="text-xs">Ayarla</Button>
+                      </div>
+                    </form>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <div className="rounded-md border border-neutral-200 bg-white p-2">
+                      <div className="text-xs text-zinc-600">Bugün</div>
+                      <div className="text-lg font-semibold">{upcomingToday.length || 0}</div>
+                    </div>
+                    <div className="rounded-md border border-neutral-200 bg-white p-2">
+                      <div className="text-xs text-zinc-600">+3 gün</div>
+                      <div className="text-lg font-semibold">{upcoming3d.length || 0}</div>
+                    </div>
+                    <div className="rounded-md border border-neutral-200 bg-white p-2">
+                      <div className="text-xs text-zinc-600">+1 hafta</div>
+                      <div className="text-lg font-semibold">{upcoming1w.length || 0}</div>
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <div className="flex h-2 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+                      <div style={{ width: `${upcomingPct.today}%` }} className="bg-indigo-600" />
+                      <div style={{ width: `${upcomingPct.three}%` }} className="bg-amber-500" />
+                      <div style={{ width: `${upcomingPct.week}%` }} className="bg-green-600" />
+                    </div>
+                    <div className="mt-1 text-[10px] text-zinc-500">Bugün {upcomingPct.today}% • +3 gün {upcomingPct.three}% • +1 hafta {upcomingPct.week}%</div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-zinc-600">
+                      <Badge className="bg-indigo-100 border-indigo-200 text-indigo-700 dark:bg-indigo-900 dark:border-indigo-800 dark:text-indigo-300">Bugün</Badge>
+                      <Badge className="bg-amber-100 border-amber-200 text-amber-700 dark:bg-amber-900 dark:border-amber-800 dark:text-amber-300">+3 gün</Badge>
+                      <Badge className="bg-green-100 border-green-200 text-green-700 dark:bg-green-900 dark:border-green-800 dark:text-green-300">+1 hafta</Badge>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </Card>
-        <Card className="transition duration-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-zinc-600">Yaklaşan</div>
-            <Calendar className="h-5 w-5 text-neutral-600" />
-          </div>
-          <div className="mt-1 space-y-1 text-sm text-zinc-700">
-              {upcoming.length === 0 ? <div>Görev yok</div> : upcoming.map((t) => (
-              <div key={t.id} className="flex items-center justify-between">
-                <span className="break-words whitespace-normal">{t.title}</span>
-                <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card className="transition duration-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-zinc-600">Kanban</div>
-            <FolderKanban className="h-5 w-5 text-neutral-600" />
-          </div>
-          <div className="mt-1 text-sm text-zinc-700">Durum: {project.status}</div>
-          <div className="mt-2">
-            <Link href={`/projects/${project.id}#kanban`} className="rounded border px-2 py-1 text-xs">Aç</Link>
-          </div>
-        </Card>
       </div>
       <Tabs tabs={tabs} />
     </div>
   );
 }
 
-async function Timeline({ projectId }: { projectId: string }) {
+async function Timeline({ projectId, tlSort, tlDir, users, teams }: { projectId: string; tlSort: string; tlDir: "asc" | "desc"; users: Array<{ id: string; email: string; name: string | null }>; teams: any[] }) {
   let tasks: any[] = [];
   try {
     if (prisma.task?.findMany) {
@@ -1575,12 +1555,6 @@ async function Timeline({ projectId }: { projectId: string }) {
   try {
     const p = await prisma.project.findUnique({ where: { id: projectId }, select: { title: true } });
     projectTitle = p?.title ?? "-";
-  } catch {}
-  let users: Array<{ id: string; email: string; name: string | null }> = [];
-  try {
-    if (prisma.user?.findMany) {
-      users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
-    }
   } catch {}
   const phaseOrder = [
     "FAZ 1 – MEVCUT YAPI ANALİZİ",
@@ -1596,13 +1570,54 @@ async function Timeline({ projectId }: { projectId: string }) {
     const i = phaseOrder.indexOf(name ?? "");
     return i === -1 ? 999 : i;
   };
+  const statusOrder: Record<string, number> = { InProgress: 0, Waiting: 1, ToDo: 2, Completed: 3 };
+  const priorityOrder: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+  const dir = tlDir === "desc" ? -1 : 1;
   tasks.sort((a, b) => {
+    if (tlSort === "phase_start") {
+      const ia = phaseIndex((a as any).taskGroup?.name);
+      const ib = phaseIndex((b as any).taskGroup?.name);
+      if (ia !== ib) return (ia - ib) * dir;
+      const sa = a.startDate ? a.startDate.getTime() : 0;
+      const sb = b.startDate ? b.startDate.getTime() : 0;
+      return (sa - sb) * dir;
+    } else if (tlSort === "start") {
+      const sa = a.startDate ? a.startDate.getTime() : 0;
+      const sb = b.startDate ? b.startDate.getTime() : 0;
+      return (sa - sb) * dir;
+    } else if (tlSort === "due") {
+      const da = a.dueDate ? new Date(a.dueDate as any).getTime() : 0;
+      const db = b.dueDate ? new Date(b.dueDate as any).getTime() : 0;
+      return (da - db) * dir;
+    } else if (tlSort === "status") {
+      const sa = statusOrder[a.status as string] ?? 999;
+      const sb = statusOrder[b.status as string] ?? 999;
+      return (sa - sb) * dir;
+    } else if (tlSort === "priority") {
+      const pa = priorityOrder[a.priority as string] ?? 999;
+      const pb = priorityOrder[b.priority as string] ?? 999;
+      return (pa - pb) * dir;
+    } else if (tlSort === "title") {
+      const ta = String(a.title || "");
+      const tb = String(b.title || "");
+      return ta.localeCompare(tb) * dir;
+    } else if (tlSort === "group") {
+      const ia = phaseIndex((a as any).taskGroup?.name);
+      const ib = phaseIndex((b as any).taskGroup?.name);
+      return (ia - ib) * dir;
+    } else if (tlSort === "assigned") {
+      const ua = users.find((u) => u.id === (a.assignedToId as any));
+      const ub = users.find((u) => u.id === (b.assignedToId as any));
+      const la = ua?.name ?? ua?.email ?? "";
+      const lb = ub?.name ?? ub?.email ?? "";
+      return la.localeCompare(lb) * dir;
+    }
     const ia = phaseIndex((a as any).taskGroup?.name);
     const ib = phaseIndex((b as any).taskGroup?.name);
-    if (ia !== ib) return ia - ib;
+    if (ia !== ib) return (ia - ib) * dir;
     const sa = a.startDate ? a.startDate.getTime() : 0;
     const sb = b.startDate ? b.startDate.getTime() : 0;
-    return sa - sb;
+    return (sa - sb) * dir;
   });
   return (
     <Card className="p-3 sm:p-4">
@@ -1614,17 +1629,84 @@ async function Timeline({ projectId }: { projectId: string }) {
           <thead>
             <tr className="text-left text-xs text-zinc-500">
               <th className="px-3 py-2">Proje</th>
-              <th className="px-3 py-2">Grup</th>
-              <th className="px-3 py-2">Başlık</th>
-              <th className="px-3 py-2">Durum</th>
-              <th className="px-3 py-2">Öncelik</th>
-              <th className="px-3 py-2">Atanan</th>
+              <th className="px-3 py-2">
+                {(() => {
+                  const key = "group";
+                  const active = tlSort === key;
+                  const nextDir = active && tlDir === "asc" ? "desc" : "asc";
+                  const href = `/projects/${projectId}?tlSort=${key}&tlDir=${nextDir}#timeline`;
+                  return (
+                    <Link href={href} className="inline-flex items-center gap-1 hover:underline">
+                      Grup
+                      {active ? (tlDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3" />}
+                    </Link>
+                  );
+                })()}
+              </th>
+              <th className="px-3 py-2">
+                {(() => {
+                  const key = "title";
+                  const active = tlSort === key;
+                  const nextDir = active && tlDir === "asc" ? "desc" : "asc";
+                  const href = `/projects/${projectId}?tlSort=${key}&tlDir=${nextDir}#timeline`;
+                  return (
+                    <Link href={href} className="inline-flex items-center gap-1 hover:underline">
+                      Başlık
+                      {active ? (tlDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3" />}
+                    </Link>
+                  );
+                })()}
+              </th>
+              <th className="px-3 py-2">
+                {(() => {
+                  const key = "status";
+                  const active = tlSort === key;
+                  const nextDir = active && tlDir === "asc" ? "desc" : "asc";
+                  const href = `/projects/${projectId}?tlSort=${key}&tlDir=${nextDir}#timeline`;
+                  return (
+                    <Link href={href} className="inline-flex items-center gap-1 hover:underline">
+                      Durum
+                      {active ? (tlDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3" />}
+                    </Link>
+                  );
+                })()}
+              </th>
+              <th className="px-3 py-2">
+                {(() => {
+                  const key = "priority";
+                  const active = tlSort === key;
+                  const nextDir = active && tlDir === "asc" ? "desc" : "asc";
+                  const href = `/projects/${projectId}?tlSort=${key}&tlDir=${nextDir}#timeline`;
+                  return (
+                    <Link href={href} className="inline-flex items-center gap-1 hover:underline">
+                      Öncelik
+                      {active ? (tlDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3" />}
+                    </Link>
+                  );
+                })()}
+              </th>
+              <th className="px-3 py-2">
+                {(() => {
+                  const key = "assigned";
+                  const active = tlSort === key;
+                  const nextDir = active && tlDir === "asc" ? "desc" : "asc";
+                  const href = `/projects/${projectId}?tlSort=${key}&tlDir=${nextDir}#timeline`;
+                  return (
+                    <Link href={href} className="inline-flex items-center gap-1 hover:underline">
+                      Atanan
+                      {active ? (tlDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3" />}
+                    </Link>
+                  );
+                })()}
+              </th>
               <th className="px-3 py-2 w-20">İşlemler</th>
             </tr>
           </thead>
           <tbody>
             {tasks.map((t) => {
               const assignedLabel = users.find((u) => u.id === (t.assignedToId as any))?.name ?? users.find((u) => u.id === (t.assignedToId as any))?.email ?? "Atanmadı";
+              const teamLabel = teams.find((tm: any) => tm.id === (t.assignedTeamId as any))?.name ?? null;
+              const managerLabel = (() => { const tm = teams.find((x: any) => x.id === (t.assignedTeamId as any)); const lead = tm?.members?.find((m: any) => m.role === "Lead" || m.role === "Manager"); return lead ? (lead.user?.name ?? lead.user?.email ?? null) : null; })();
               return (
                 <tr key={t.id} className="border-t">
                   <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{projectTitle}</td>
@@ -1634,7 +1716,14 @@ async function Timeline({ projectId }: { projectId: string }) {
                     <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
                   </td>
                   <td className="px-3 py-2 align-middle">{t.priority}</td>
-                  <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{assignedLabel}</td>
+                  <td className="px-3 py-2 align-middle">
+                    <div className="flex flex-wrap gap-1">
+                      {t.assignedToId ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Kişi: {assignedLabel}</Badge> : null}
+                      {teamLabel ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Takım: {teamLabel}</Badge> : null}
+                      {teamLabel && managerLabel ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Yönetici: {managerLabel}</Badge> : null}
+                      {!t.assignedToId && !teamLabel ? <span className="text-xs text-zinc-500">Atama yok</span> : null}
+                    </div>
+                  </td>
                   <td className="px-3 py-2 align-middle">
                     <TaskRowActions task={{ id: t.id, status: t.status as any, priority: t.priority as any, assignedToId: t.assignedToId as any, dueDate: t.dueDate as any }} users={users} />
                   </td>
