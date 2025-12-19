@@ -107,6 +107,7 @@ export default function CreateUserModal({ teams, label = "Yeni Kullanıcı", q }
                       >
                         <option value="Member">Member</option>
                         <option value="Lead">Lead</option>
+                        <option value="Manager">Manager</option>
                       </select>
                     </div>
                   ))}

@@ -66,8 +66,8 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Recor
             </div>
             <p className="mt-2 text-sm text-zinc-600">{t.description}</p>
             <div className="mt-2 flex items-center gap-2">
-              <Badge className="bg-indigo-600 border-indigo-700 text-white">Lead {t.members.filter((m) => m.role === "Lead").length}</Badge>
-              <Badge className="bg-zinc-700 border-zinc-800 text-white">Member {t.members.filter((m) => !m.role || m.role === "Member").length}</Badge>
+              <Badge className="bg-indigo-600 border-indigo-700 text-white">Yönetici {t.members.filter((m) => m.role === "Lead" || m.role === "Manager").length}</Badge>
+              <Badge className="bg-zinc-700 border-zinc-800 text-white">Üye {t.members.filter((m) => !m.role || m.role === "Member").length}</Badge>
             </div>
             <div className="mt-2 text-xs text-zinc-600">Toplam üye: {t.members.length}</div>
             <div className="mt-1 text-xs text-zinc-500">Güncellenme: {new Date(t.updatedAt).toLocaleString()}</div>
@@ -76,9 +76,9 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Recor
                 {t.members.map((m) => (
                   <Badge
                     key={m.userId}
-                    className={m.role === "Lead" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}
+                    className={(m.role === "Lead" || m.role === "Manager") ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}
                   >
-                    {((m.user?.name ?? m.user?.email) || m.userId) + ` (${m.role && m.role !== "Member" ? m.role : "Member"})`}
+                    {((m.user?.name ?? m.user?.email) || m.userId) + ` (${(m.role && m.role !== "Member") ? "Yönetici" : "Üye"})`}
                   </Badge>
                 ))}
               </div>
@@ -114,6 +114,7 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Recor
                 <Select name="role" defaultValue="Member" className="w-32 text-xs">
                   <option value="Member">Member</option>
                   <option value="Lead">Lead</option>
+                  <option value="Manager">Manager</option>
                 </Select>
                 <Button type="submit" variant="outline" size="sm" className="text-[10px] px-2">Ekle</Button>
               </form>

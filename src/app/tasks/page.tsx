@@ -10,27 +10,37 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { RBAC } from "@/lib/rbac";
+import QuickTaskModal from "@/components/quick-task-modal";
 
 export default async function TasksPage({ searchParams }: { searchParams?: Record<string, string | undefined> }) {
   const session = await getServerSession(authConfig as any);
   if (!session) return redirect("/login");
   const sp = searchParams ? await (searchParams as any) : {};
   const projectId = sp.projectId && sp.projectId !== "" ? sp.projectId : "";
+  const groupId = sp.groupId && sp.groupId !== "" ? sp.groupId : "";
   const q = sp.q && sp.q !== "" ? sp.q : "";
   const statusFilter = sp.status && sp.status !== "" ? sp.status : "";
   const priorityFilter = sp.priority && sp.priority !== "" ? sp.priority : "";
+  const assignedToFilter = sp.assignedToId && sp.assignedToId !== "" ? sp.assignedToId : "";
+  const teamFilter = sp.assignedTeamId && sp.assignedTeamId !== "" ? sp.assignedTeamId : "";
   const mineFilter = sp.mine && sp.mine !== "" ? true : false;
   const userId = (session as any).user?.id as string | undefined;
   const projects = await prisma.project.findMany({ select: { id: true, title: true }, orderBy: { title: "asc" } });
+  const groups = projectId ? await prisma.taskGroup.findMany({ where: { projectId }, orderBy: { name: "asc" } }) : [];
+  const users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
+  const teams = await prisma.team.findMany({ select: { id: true, name: true } });
   const tasks = await prisma.task.findMany({
     where: {
       ...(projectId ? { projectId } : {}),
+      ...(groupId ? { taskGroupId: groupId } : {}),
       ...(statusFilter ? { status: statusFilter as any } : {}),
       ...(priorityFilter ? { priority: priorityFilter as any } : {}),
+      ...(assignedToFilter ? { assignedToId: assignedToFilter } : {}),
+      ...(teamFilter ? { assignedTeamId: teamFilter } : {}),
       ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] } : {}),
       ...(mineFilter && userId ? { assignedToId: userId } : {}),
     },
-    include: { assignedTo: true, assignedTeam: true, project: true },
+    include: { assignedTo: true, assignedTeam: true, project: true, taskGroup: true },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
   });
   
@@ -38,33 +48,71 @@ export default async function TasksPage({ searchParams }: { searchParams?: Recor
     <div className="px-2 sm:px-4 lg:px-6 py-2 sm:py-4 lg:py-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Görevler</h1>
+        <div className="flex items-center gap-2">
+          <QuickTaskModal projects={projects} users={users} teams={teams} label="Görev Ekle" />
+        </div>
       </div>
 
       <Card className="p-4">
         <form
-          className="flex flex-wrap items-end gap-2"
-          action={async (formData: FormData) => {
-            "use server";
-            const nextProjectId = String(formData.get("projectId") || "");
-            const nextQ = String(formData.get("q") || "");
-            const nextStatus = String(formData.get("status") || "");
-            const nextPriority = String(formData.get("priority") || "");
-            const nextMine = String(formData.get("mine") || "");
-            const qs = new URLSearchParams();
-            if (nextProjectId) qs.set("projectId", nextProjectId);
-            if (nextQ) qs.set("q", nextQ);
-            if (nextStatus) qs.set("status", nextStatus);
-            if (nextPriority) qs.set("priority", nextPriority);
-            if (nextMine) qs.set("mine", "1");
-            return (await import("next/navigation")).redirect(`/tasks?${qs.toString()}`);
-          }}
-        >
+        className="flex flex-wrap items-end gap-2"
+        action={async (formData: FormData) => {
+          "use server";
+          const nextProjectId = String(formData.get("projectId") || "");
+          const nextGroupId = String(formData.get("groupId") || "");
+          const nextQ = String(formData.get("q") || "");
+          const nextStatus = String(formData.get("status") || "");
+          const nextPriority = String(formData.get("priority") || "");
+          const nextAssignedToId = String(formData.get("assignedToId") || "");
+          const nextAssignedTeamId = String(formData.get("assignedTeamId") || "");
+          const nextMine = String(formData.get("mine") || "");
+          const qs = new URLSearchParams();
+          if (nextProjectId) qs.set("projectId", nextProjectId);
+          if (nextGroupId) qs.set("groupId", nextGroupId);
+          if (nextQ) qs.set("q", nextQ);
+          if (nextStatus) qs.set("status", nextStatus);
+          if (nextPriority) qs.set("priority", nextPriority);
+          if (nextAssignedToId) qs.set("assignedToId", nextAssignedToId);
+          if (nextAssignedTeamId) qs.set("assignedTeamId", nextAssignedTeamId);
+          if (nextMine) qs.set("mine", "1");
+          return (await import("next/navigation")).redirect(`/tasks?${qs.toString()}`);
+        }}
+      >
           <div className="flex flex-col">
             <label className="text-xs text-zinc-600">Proje</label>
             <Select name="projectId" defaultValue={projectId} className="rounded border px-2 py-1 text-sm">
               <option value="">Tümü</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.title}</option>
+              ))}
+            </Select>
+          </div>
+          {projectId ? (
+            <div className="flex flex-col">
+              <label className="text-xs text-zinc-600">Grup</label>
+              <Select name="groupId" defaultValue={groupId} className="rounded border px-2 py-1 text-sm">
+                <option value="">Tümü</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
+          <div className="flex flex-col">
+            <label className="text-xs text-zinc-600">Atanan</label>
+            <Select name="assignedToId" defaultValue={assignedToFilter} className="rounded border px-2 py-1 text-sm">
+              <option value="">Tümü</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs text-zinc-600">Takım</label>
+            <Select name="assignedTeamId" defaultValue={teamFilter} className="rounded border px-2 py-1 text-sm">
+              <option value="">Tümü</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </Select>
           </div>
@@ -108,6 +156,7 @@ export default async function TasksPage({ searchParams }: { searchParams?: Recor
             <thead>
               <tr className="text-left text-zinc-600">
                 <th className="px-2 sm:px-4 lg:px-6 py-2">Başlık</th>
+                <th className="px-2 sm:px-4 lg:px-6 py-2">Grup</th>
                 <th className="px-2 sm:px-4 lg:px-6 py-2">Proje</th>
                 <th className="px-2 sm:px-4 lg:px-6 py-2">Durum</th>
                 <th className="px-2 sm:px-4 lg:px-6 py-2">Öncelik</th>
@@ -122,6 +171,7 @@ export default async function TasksPage({ searchParams }: { searchParams?: Recor
                     <div className="font-medium">{t.title}</div>
                     <div className="text-xs text-zinc-600 line-clamp-2">{t.description}</div>
                   </td>
+                  <td className="px-2 sm:px-4 lg:px-6 py-2 text-xs text-zinc-600">{(t as any).taskGroup?.name ?? "-"}</td>
                   <td className="px-2 sm:px-4 lg:px-6 py-2">{t.project?.title}</td>
                   <td className="px-2 sm:px-4 lg:px-6 py-2">
                     <form method="post"

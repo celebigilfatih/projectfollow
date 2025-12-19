@@ -27,24 +27,48 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ id:
             <li key={m.userId} className="flex items-center justify-between rounded border p-2">
               <div>
                 <div className="text-sm">{m.user?.name ?? m.user?.email}</div>
-                <div className="text-xs text-zinc-500">{m.role ?? "Üye"}</div>
+                <div className="text-xs text-zinc-500">{(m.role && m.role !== "Member") ? "Yönetici" : "Üye"}</div>
               </div>
-              <form method="post"
-                action={async () => {
-                  "use server";
-                  const session = await getServerSession(authConfig as any);
-                  if (!session) return;
-                  const roles = (session as any).roles as any[] | undefined;
-                  if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
-                    return (await import("next/navigation")).redirect(`/teams/${team.id}?error=forbidden`);
-                  }
-                  await prisma.teamMember.delete({ where: { teamId_userId: { teamId: team.id, userId: m.userId } } });
-                  await prisma.activityLog.create({ data: { userId: (session as any).user?.id, teamId: team.id, action: "TeamMemberRemove", entityType: "TeamMember", metadata: { targetUserId: m.userId } } });
-                  return (await import("next/navigation")).redirect(`/teams/${team.id}?ok=member_removed`);
-                }}
-              >
-                <Button type="submit" variant="destructive" size="sm" className="text-xs">Kaldır</Button>
-              </form>
+              <div className="flex items-center gap-2">
+                <form method="post"
+                  action={async (formData: FormData) => {
+                    "use server";
+                    const role = String(formData.get("role") || "Member");
+                    const session = await getServerSession(authConfig as any);
+                    if (!session) return;
+                    const roles = (session as any).roles as any[] | undefined;
+                    if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
+                      return (await import("next/navigation")).redirect(`/teams/${team.id}?error=forbidden`);
+                    }
+                    await prisma.teamMember.update({ where: { teamId_userId: { teamId: team.id, userId: m.userId } }, data: { role } });
+                    await prisma.activityLog.create({ data: { userId: (session as any).user?.id, teamId: team.id, action: "TeamMemberRoleUpdate", entityType: "TeamMember", metadata: { targetUserId: m.userId, role } } });
+                    return (await import("next/navigation")).redirect(`/teams/${team.id}?ok=member_role_updated`);
+                  }}
+                >
+                  <Select name="role" defaultValue={m.role ?? "Member"} className="text-xs">
+                    <option value="Member">Member</option>
+                    <option value="Lead">Lead</option>
+                    <option value="Manager">Manager</option>
+                  </Select>
+                  <Button type="submit" variant="outline" size="sm" className="text-[10px] px-2">Kaydet</Button>
+                </form>
+                <form method="post"
+                  action={async () => {
+                    "use server";
+                    const session = await getServerSession(authConfig as any);
+                    if (!session) return;
+                    const roles = (session as any).roles as any[] | undefined;
+                    if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
+                      return (await import("next/navigation")).redirect(`/teams/${team.id}?error=forbidden`);
+                    }
+                    await prisma.teamMember.delete({ where: { teamId_userId: { teamId: team.id, userId: m.userId } } });
+                    await prisma.activityLog.create({ data: { userId: (session as any).user?.id, teamId: team.id, action: "TeamMemberRemove", entityType: "TeamMember", metadata: { targetUserId: m.userId } } });
+                    return (await import("next/navigation")).redirect(`/teams/${team.id}?ok=member_removed`);
+                  }}
+                >
+                  <Button type="submit" variant="destructive" size="sm" className="text-xs">Kaldır</Button>
+                </form>
+              </div>
             </li>
           ))}
         </ul>
@@ -80,10 +104,11 @@ function AddMemberForm({ teamId, users }: { teamId: string; users: Array<{ id: s
           <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
         ))}
       </select>
-      <Select name="role" defaultValue="Member" required className="w-full">
-        <option value="Member">Member</option>
-        <option value="Lead">Lead</option>
-      </Select>
+  <Select name="role" defaultValue="Member" required className="w-full">
+    <option value="Member">Member</option>
+    <option value="Lead">Lead</option>
+    <option value="Manager">Manager</option>
+  </Select>
       <Button type="submit">Ekle</Button>
     </form>
   );

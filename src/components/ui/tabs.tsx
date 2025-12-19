@@ -25,7 +25,7 @@ export function Tabs({ tabs, defaultTab }: { tabs: { id: string; label: string; 
   return (
     <div>
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-        <div className="flex gap-2 border-b border-neutral-200">
+        <div className="flex gap-2 border-b border-neutral-200 overflow-x-auto whitespace-nowrap">
         {tabs.map((t) => (
           <button
             key={t.id}

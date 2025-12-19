@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authConfig } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
+import { RBAC } from "@/lib/rbac";
 import { Tabs } from "@/components/ui/tabs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -13,19 +14,54 @@ import KanbanBoard from "@/components/kanban-board";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FolderKanban, ListTodo, CheckCircle2, Calendar, User, Flag, MoreVertical, Download, AlertTriangle, Clock } from "lucide-react";
+import { FolderKanban, ListTodo, CheckCircle2, Calendar, MoreVertical, Download, AlertTriangle, Clock, Plus, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import TaskRowActions from "@/components/task-row-actions";
 import ThemeToggle from "@/components/theme-toggle";
 
 export default async function ProjectDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: Record<string, string | undefined> }) {
   const session = await getServerSession(authConfig as any);
   if (!session) return redirect("/login");
   const { id } = await (params as any);
-  const project = await prisma.project.findUnique({ where: { id }, include: { tasks: true, responsible: true } });
+  const project = await (async () => {
+    try {
+      return await prisma.project.findUnique({ where: { id }, include: { tasks: true, responsible: true } });
+    } catch {
+      return null;
+    }
+  })();
   if (!project) return notFound();
-  const users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
-  const teams = await prisma.team.findMany({ select: { id: true, name: true } });
+  let users: Array<{ id: string; email: string; name: string | null }> = [];
+  try {
+    if (prisma.user?.findMany) {
+      users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
+    }
+  } catch {}
+  let teams: Array<any> = [];
+  try {
+    if (prisma.team?.findMany) {
+      teams = await prisma.team.findMany({ include: { members: { include: { user: true } } } });
+    }
+  } catch {}
+  const teamsForSelect = teams.map((t) => ({
+    id: t.id,
+    name: t.name,
+    managerName: (() => {
+      const lead = Array.isArray(t.members) ? t.members.find((m: any) => m.role === "Manager" || m.role === "Lead") : null;
+      const nm = (lead as any)?.user?.name ?? (lead as any)?.user?.email ?? null;
+      return nm || null;
+    })(),
+  }));
+  let groups: Array<{ id: string; name: string }> = [];
+  try {
+    if (prisma.taskGroup?.findMany) {
+      groups = await prisma.taskGroup.findMany({ where: { projectId: id }, orderBy: { name: "asc" } }) as any;
+    }
+  } catch {}
   const userId = (session as any).user?.id as string | undefined;
+  const roles = (session as any).roles as any[] | undefined;
+  const canRemove = RBAC.canManageAll(roles) || project.responsibleId === userId;
   const total = project.tasks.length;
   const done = project.tasks.filter((t) => t.status === "Completed").length;
   const completedPct = total ? Math.round((done / total) * 100) : 0;
@@ -33,6 +69,10 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   const q = sp.q && sp.q !== "" ? sp.q : "";
   const statusFilter = sp.status && sp.status !== "" ? sp.status : "";
   const priorityFilter = sp.priority && sp.priority !== "" ? sp.priority : "";
+  const groupFilter = sp.groupId && sp.groupId !== "" ? sp.groupId : "";
+  const assignedToFilter = sp.assignedToId && sp.assignedToId !== "" ? sp.assignedToId : "";
+  const teamFilter = sp.assignedTeamId && sp.assignedTeamId !== "" ? sp.assignedTeamId : "";
+  const managerFilter = sp.managerId && sp.managerId !== "" ? sp.managerId : "";
   const mineFilter = sp.mine && sp.mine !== "" ? true : false;
   const overdueFilter = sp.overdue && sp.overdue !== "" ? true : false;
   const upcomingLimit = sp.upLimit && !isNaN(Number(sp.upLimit)) ? Math.min(20, Math.max(1, parseInt(sp.upLimit))) : 5;
@@ -58,17 +98,25 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
     .slice(0, upcomingLimit);
   const overdueCount = project.tasks.filter((t) => t.dueDate && t.dueDate < new Date() && t.status !== "Completed").length;
   const criticalCount = project.tasks.filter((t) => t.priority === "Critical").length;
-  const tasks = await prisma.task.findMany({
+  const managerTeamIds = managerFilter ? teams.filter((t) => Array.isArray(t.members) && t.members.some((m: any) => m.userId === managerFilter && (m.role === "Lead" || m.role === "Manager"))).map((t) => t.id) : [];
+  let tasks: any[] = [];
+  try {
+  if (prisma.task?.findMany) tasks = await prisma.task.findMany({
     where: {
       projectId: id,
       ...(statusFilter ? { status: statusFilter as any } : {}),
       ...(priorityFilter ? { priority: priorityFilter as any } : {}),
+      ...(groupFilter ? { taskGroupId: groupFilter } : {}),
+      ...(assignedToFilter ? { assignedToId: assignedToFilter } : {}),
+      ...(teamFilter ? { assignedTeamId: teamFilter } : {}),
+      ...(managerFilter && managerTeamIds.length > 0 ? { assignedTeamId: { in: managerTeamIds } } : {}),
       ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] } : {}),
       ...(mineFilter && userId ? { assignedToId: userId } : {}),
       ...(overdueFilter ? { dueDate: { lt: new Date() } } : {}),
     },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
   });
+  } catch {}
 
   const tabs = [
     {
@@ -80,16 +128,16 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-3">
                 <div className="rounded-md border border-[var(--border)] bg-white">
-                  <CardHeader>
-                    <CardTitle className="text-sm">Açıklama</CardTitle>
+                  <CardHeader className="px-4 pt-4">
+                    <CardTitle className="text-sm font-bold">Açıklama</CardTitle>
                   </CardHeader>
-                  <div className="px-3 pb-3 text-sm text-zinc-700 whitespace-pre-line">{project.description ?? "-"}</div>
+                  <div className="px-4 pb-4 text-sm text-zinc-700 whitespace-pre-line">{project.description ?? "-"}</div>
                 </div>
                 <div className="rounded-md border border-[var(--border)] bg-white">
-                  <CardHeader>
-                    <CardTitle className="text-sm">Kapsam</CardTitle>
+                  <CardHeader className="px-4 pt-4">
+                    <CardTitle className="text-sm font-bold">Kapsam</CardTitle>
                   </CardHeader>
-                  <div className="px-3 pb-3 text-sm text-zinc-700">
+                  <div className="px-4 pb-4 text-sm text-zinc-700">
                     {(() => {
                       const txt = project.scope?.trim();
                       const tokens = txt && txt.includes(",") ? txt.split(",").map((s) => s.trim()).filter(Boolean) : [];
@@ -97,8 +145,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       return (
                         <div className="flex flex-wrap gap-2">
                           {tokens.map((t) => (
-                            <Link key={t} href={`/projects/${project.id}?q=${encodeURIComponent(t)}#overview`} className="inline-flex">
-                              <Badge className="bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200">{t}</Badge>
+                            <Link key={t} href={`/projects/${project.id}?q=${encodeURIComponent(t)}#overview`} className="inline-flex max-w-full">
+                              <Badge className="bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200 break-all max-w-full">{t}</Badge>
                             </Link>
                           ))}
                         </div>
@@ -189,7 +237,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                           <div className="space-y-1">
                             {upcomingToday.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcomingToday.map((t) => (
                               <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
                                 <div className="flex items-center gap-2">
                                   <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
                                   <span className="text-xs text-zinc-500">{t.priority}</span>
@@ -204,7 +252,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                           <div className="space-y-1">
                             {upcoming3d.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming3d.map((t) => (
                               <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
                                 <div className="flex items-center gap-2">
                                   <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
                                   <span className="text-xs text-zinc-500">{t.priority}</span>
@@ -219,7 +267,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                           <div className="space-y-1">
                             {upcoming1w.length === 0 ? <div className="text-xs text-zinc-600">Yok</div> : upcoming1w.map((t) => (
                               <div key={t.id} className="flex items-center justify-between gap-2">
-                                <Link href={`/tasks/${t.id}`} className="truncate hover:underline">{t.title}</Link>
+                                <Link href={`/tasks/${t.id}`} className="flex-1 min-w-0 text-sm hover:underline break-words whitespace-normal">{t.title}</Link>
                                 <div className="flex items-center gap-2">
                                   <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
                                   <span className="text-xs text-zinc-500">{t.priority}</span>
@@ -235,7 +283,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 </div>
                 <div className="rounded-md border border-neutral-200 bg-white">
                   <CardHeader>
-                    <CardTitle className="text-sm">Zaman ve Kayıt</CardTitle>
+                    <CardTitle className="text-sm font-bold">Zaman ve Kayıt</CardTitle>
                   </CardHeader>
                   <div className="px-3 pb-3 grid grid-cols-1 gap-2 md:grid-cols-2">
                     <div className="rounded-md border border-[var(--border)] bg-white p-2">
@@ -262,23 +310,875 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
           <Timeline projectId={project.id} />
           <Card className="bg-gradient-to-r from-neutral-50 to-white dark:from-neutral-900 dark:to-neutral-800 p-3 sm:p-4">
             <CardHeader>
-              <CardTitle>Görevler</CardTitle>
+              <CardTitle className="font-bold">Görevler</CardTitle>
             </CardHeader>
+            <TooltipProvider>
             <div className="space-y-2">
               <div className="flex items-center justify-end">
-                <QuickTaskModal projectId={project.id} users={users} teams={teams} />
+                <QuickTaskModal projectId={project.id} users={users} teams={teamsForSelect} />
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-zinc-600">FAZ 1 – Mevcut Yapı Analizi</div>
+                      {groups.some((g) => g.name === "FAZ 1 – MEVCUT YAPI ANALİZİ") && (
+                        <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                      )}
+                    </div>
+                    <form
+                      action={async () => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        if (!RBAC.canManageOwnProjects(roles)) return;
+                        const groupName = "FAZ 1 – MEVCUT YAPI ANALİZİ";
+                        const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                        const titles = [
+                          "Mevcut Domain Controller’ların incelenmesi",
+                          "Kullanıcı sayısının tespiti",
+                          "OU yapısının çıkarılması",
+                          "Security Group envanteri",
+                          "Bilgisayar hesaplarının analizi",
+                          "Bağımlı servis ve uygulamaların listelenmesi",
+                          "Risk ve bağımlılık analizi",
+                        ];
+                        for (const title of titles) {
+                          const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                          if (!already) {
+                            const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ1" } } });
+                          }
+                        }
+                        await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                    </form>
+                    {groups.some((g) => g.name === "FAZ 1 – MEVCUT YAPI ANALİZİ") && canRemove && (
+                      <form
+                        action={async (formData: FormData) => {
+                          "use server";
+                          const session = await getServerSession(authConfig as any);
+                          if (!session) return;
+                          const roles = (session as any).roles as any[] | undefined;
+                          const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                          if (!canDelete) return;
+                          const ok = formData.get("confirmDelete");
+                          if (!ok) {
+                            return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                          }
+                          const groupName = "FAZ 1 – MEVCUT YAPI ANALİZİ";
+                          const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                          if (group) {
+                            const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                            for (const t of tasks) {
+                              await prisma.$transaction([
+                                prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                                prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                                prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                                prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                                prisma.task.delete({ where: { id: t.id } }),
+                              ]);
+                              await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ1" } } });
+                            }
+                            await prisma.taskGroup.delete({ where: { id: group.id } });
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                          }
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }}
+                      >
+                        <label className="flex items-center gap-2 text-xs text-zinc-600">
+                          <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                          Onaylıyorum
+                        </label>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Kaldır</TooltipContent>
+                        </Tooltip>
+                      </form>
+                    )}
+                  </div>
+                </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 2 – Yeni Domain Tasarımı</div>
+                    {groups.some((g) => g.name === "FAZ 2 – YENİ DOMAIN TASARIMI") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 2 – YENİ DOMAIN TASARIMI";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "Domain adı ve namespace tasarımı (buski.local)",
+                        "OU mimarisinin belirlenmesi",
+                        "OU mimarisi: Daire Başkanlıkları",
+                        "OU mimarisi: Şube Müdürlükleri",
+                        "OU mimarisi: Kullanıcı/Bilgisayar ayrımı",
+                        "Naming convention belirlenmesi",
+                        "Security Group tasarımı (Role-Based)",
+                        "Yetkilendirme modeli (Least Privilege)",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ2" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 2 – YENİ DOMAIN TASARIMI") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 2 – YENİ DOMAIN TASARIMI";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ2" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 3 – Windows Server 2019 Kurulumu</div>
+                    {groups.some((g) => g.name === "FAZ 3 – WINDOWS SERVER 2019 KURULUMU") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 3 – WINDOWS SERVER 2019 KURULUMU";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "Windows Server 2019 kurulumu",
+                        "Güncelleme ve güvenlik yamaları",
+                        "Domain Controller kurulumu",
+                        "DNS yapılandırması",
+                        "FSMO rollerinin planlanması",
+                        "Yedeklilik planı",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ3" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 3 – WINDOWS SERVER 2019 KURULUMU") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 3 – WINDOWS SERVER 2019 KURULUMU";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ3" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 4 – OU, Kullanıcı ve Grup Oluşturma</div>
+                    {groups.some((g) => g.name === "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "OU’ların oluşturulması",
+                        "Daire Başkanlıklarına göre kullanıcı hesaplarının açılması",
+                        "Servis hesaplarının oluşturulması",
+                        "Security Group’ların oluşturulması",
+                        "Grup – kullanıcı eşleşmelerinin yapılması",
+                        "Yetki testleri",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ4" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ4" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 5 – Daire Başkanlığı Bazlı Geçiş</div>
+                    {groups.some((g) => g.name === "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "Pilot daire seçimi",
+                        "Pilot kullanıcı geçişi",
+                        "Test senaryolarının uygulanması",
+                        "Sorun ve geri bildirimlerin alınması",
+                        "Daire başkanlıkları bazında planlı geçiş",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ5" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ5" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 6 – Test, Doğrulama ve Kabul</div>
+                    {groups.some((g) => g.name === "FAZ 6 – TEST, DOĞRULAMA VE KABUL") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 6 – TEST, DOĞRULAMA VE KABUL";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "Kullanıcı login testleri",
+                        "Yetki kontrolleri",
+                        "DNS ve AD replikasyon kontrolleri",
+                        "Performans testleri",
+                        "Güvenlik kontrolleri",
+                        "Kabul tutanağı hazırlanması",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ6" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 6 – TEST, DOĞRULAMA VE KABUL") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 6 – TEST, DOĞRULAMA VE KABUL";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ6" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-zinc-600">FAZ 7 – Dokümantasyon ve Devir</div>
+                    {groups.some((g) => g.name === "FAZ 7 – DOKÜMANTASYON VE DEVİR") && (
+                      <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                    )}
+                  </div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 7 – DOKÜMANTASYON VE DEVİR";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "AD mimari dokümanı",
+                        "OU ve Group yapısı dokümantasyonu",
+                        "Kullanıcı yönetim prosedürleri",
+                        "Yedekleme ve geri dönüş planı",
+                        "Operasyon ekibine devir",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ7" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 7 – DOKÜMANTASYON VE DEVİR") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 7 – DOKÜMANTASYON VE DEVİR";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ7" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-zinc-600">FAZ 8 – Başarı Kriterleri</div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const groupName = "FAZ 8 – BAŞARI KRİTERLERİ";
+                      const existing = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                      const group = existing ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: groupName } });
+                      const titles = [
+                        "Eski bbslocal domaininin sorunsuz kapatılması",
+                        "buski.local domaininin aktif ve stabil çalışması",
+                        "Kullanıcıların kesintisiz erişim sağlaması",
+                        "Yetkilendirme hatalarının olmaması",
+                        "Dokümantasyonun eksiksiz teslim edilmesi",
+                      ];
+                      for (const title of titles) {
+                        const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: group.id } });
+                        if (!already) {
+                          const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: "FAZ8" } } });
+                        }
+                      }
+                      await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: groupName } } });
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="outline" size="sm">Ekle</Button>
+                  </form>
+                  {groups.some((g) => g.name === "FAZ 8 – BAŞARI KRİTERLERİ") && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const groupName = "FAZ 8 – BAŞARI KRİTERLERİ";
+                        const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: groupName } });
+                        if (group) {
+                          const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                          for (const t of tasks) {
+                            await prisma.$transaction([
+                              prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                              prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                              prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                              prisma.task.delete({ where: { id: t.id } }),
+                            ]);
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: "FAZ8" } } });
+                          }
+                          await prisma.taskGroup.delete({ where: { id: group.id } });
+                          await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name: groupName } } });
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-zinc-600">Tüm Fazlar (1–8)</div>
+                  <form
+                    action={async () => {
+                      "use server";
+                      const session = await getServerSession(authConfig as any);
+                      if (!session) return;
+                      const roles = (session as any).roles as any[] | undefined;
+                      if (!RBAC.canManageOwnProjects(roles)) return;
+                      const phases: Array<{ name: string; titles: string[]; meta: string }> = [
+                        { name: "FAZ 1 – MEVCUT YAPI ANALİZİ", meta: "FAZ1", titles: [
+                          "Mevcut Domain Controller’ların incelenmesi",
+                          "Kullanıcı sayısının tespiti",
+                          "OU yapısının çıkarılması",
+                          "Security Group envanteri",
+                          "Bilgisayar hesaplarının analizi",
+                          "Bağımlı servis ve uygulamaların listelenmesi",
+                          "Risk ve bağımlılık analizi",
+                        ]},
+                        { name: "FAZ 2 – YENİ DOMAIN TASARIMI", meta: "FAZ2", titles: [
+                          "Domain adı ve namespace tasarımı (buski.local)",
+                          "OU mimarisinin belirlenmesi",
+                          "OU mimarisi: Daire Başkanlıkları",
+                          "OU mimarisi: Şube Müdürlükleri",
+                          "OU mimarisi: Kullanıcı/Bilgisayar ayrımı",
+                          "Naming convention belirlenmesi",
+                          "Security Group tasarımı (Role-Based)",
+                          "Yetkilendirme modeli (Least Privilege)",
+                        ]},
+                        { name: "FAZ 3 – WINDOWS SERVER 2019 KURULUMU", meta: "FAZ3", titles: [
+                          "Windows Server 2019 kurulumu",
+                          "Güncelleme ve güvenlik yamaları",
+                          "Domain Controller kurulumu",
+                          "DNS yapılandırması",
+                          "FSMO rollerinin planlanması",
+                          "Yedeklilik planı",
+                        ]},
+                        { name: "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA", meta: "FAZ4", titles: [
+                          "OU’ların oluşturulması",
+                          "Daire Başkanlıklarına göre kullanıcı hesaplarının açılması",
+                          "Servis hesaplarının oluşturulması",
+                          "Security Group’ların oluşturulması",
+                          "Grup – kullanıcı eşleşmelerinin yapılması",
+                          "Yetki testleri",
+                        ]},
+                        { name: "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ", meta: "FAZ5", titles: [
+                          "Pilot daire seçimi",
+                          "Pilot kullanıcı geçişi",
+                          "Test senaryolarının uygulanması",
+                          "Sorun ve geri bildirimlerin alınması",
+                          "Daire başkanlıkları bazında planlı geçiş",
+                        ]},
+                        { name: "FAZ 6 – TEST, DOĞRULAMA VE KABUL", meta: "FAZ6", titles: [
+                          "Kullanıcı login testleri",
+                          "Yetki kontrolleri",
+                          "DNS ve AD replikasyon kontrolleri",
+                          "Performans testleri",
+                          "Güvenlik kontrolleri",
+                          "Kabul tutanağı hazırlanması",
+                        ]},
+                        { name: "FAZ 7 – DOKÜMANTASYON VE DEVİR", meta: "FAZ7", titles: [
+                          "AD mimari dokümanı",
+                          "OU ve Group yapısı dokümantasyonu",
+                          "Kullanıcı yönetim prosedürleri",
+                          "Yedekleme ve geri dönüş planı",
+                          "Operasyon ekibine devir",
+                        ]},
+                        { name: "FAZ 8 – BAŞARI KRİTERLERİ", meta: "FAZ8", titles: [
+                          "Eski bbslocal domaininin sorunsuz kapatılması",
+                          "buski.local domaininin aktif ve stabil çalışması",
+                          "Kullanıcıların kesintisiz erişim sağlaması",
+                          "Yetkilendirme hatalarının olmaması",
+                          "Dokümantasyonun eksiksiz teslim edilmesi",
+                        ]},
+                      ];
+                      for (const ph of phases) {
+                        const existingGroup = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name: ph.name } });
+                        const grp = existingGroup ?? await prisma.taskGroup.create({ data: { projectId: project.id, name: ph.name } });
+                        for (const title of ph.titles) {
+                          const already = await prisma.task.findFirst({ where: { projectId: project.id, title, taskGroupId: grp.id } });
+                          if (!already) {
+                            const created = await prisma.task.create({ data: { projectId: project.id, title, status: "ToDo", priority: "Medium", taskGroupId: grp.id } });
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: created.id, action: "TaskCreate", entityType: "Task", metadata: { template: ph.meta } } });
+                          }
+                        }
+                        await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupEnsure", entityType: "TaskGroup", metadata: { name: ph.name } } });
+                      }
+                      return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                    }}
+                  >
+                    <Button type="submit" variant="default" size="sm">Tümünü Ekle</Button>
+                  </form>
+                  {(() => {
+                    const names = [
+                      "FAZ 1 – MEVCUT YAPI ANALİZİ",
+                      "FAZ 2 – YENİ DOMAIN TASARIMI",
+                      "FAZ 3 – WINDOWS SERVER 2019 KURULUMU",
+                      "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA",
+                      "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ",
+                      "FAZ 6 – TEST, DOĞRULAMA VE KABUL",
+                      "FAZ 7 – DOKÜMANTASYON VE DEVİR",
+                      "FAZ 8 – BAŞARI KRİTERLERİ",
+                    ];
+                    return names.some((n) => groups.some((g) => g.name === n));
+                  })() && canRemove && (
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        const session = await getServerSession(authConfig as any);
+                        if (!session) return;
+                        const roles = (session as any).roles as any[] | undefined;
+                        const canDelete = RBAC.canManageAll(roles) || project.responsibleId === (session as any).user?.id;
+                        if (!canDelete) return;
+                        const ok = formData.get("confirmDelete");
+                        if (!ok) {
+                          return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                        }
+                        const phases = [
+                          "FAZ 1 – MEVCUT YAPI ANALİZİ",
+                          "FAZ 2 – YENİ DOMAIN TASARIMI",
+                          "FAZ 3 – WINDOWS SERVER 2019 KURULUMU",
+                          "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA",
+                          "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ",
+                          "FAZ 6 – TEST, DOĞRULAMA VE KABUL",
+                          "FAZ 7 – DOKÜMANTASYON VE DEVİR",
+                          "FAZ 8 – BAŞARI KRİTERLERİ",
+                        ];
+                        for (const name of phases) {
+                          const group = await prisma.taskGroup.findFirst({ where: { projectId: project.id, name } });
+                          if (group) {
+                            const tasks = await prisma.task.findMany({ where: { projectId: project.id, taskGroupId: group.id } });
+                            for (const t of tasks) {
+                              await prisma.$transaction([
+                                prisma.attachment.deleteMany({ where: { taskId: t.id } }),
+                                prisma.taskComment.deleteMany({ where: { taskId: t.id } }),
+                                prisma.taskAssignee.deleteMany({ where: { taskId: t.id } }),
+                                prisma.subtask.deleteMany({ where: { taskId: t.id } }),
+                                prisma.task.delete({ where: { id: t.id } }),
+                              ]);
+                              await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, taskId: t.id, action: "TaskDelete", entityType: "Task", metadata: { template: name } } });
+                            }
+                            await prisma.taskGroup.delete({ where: { id: group.id } });
+                            await prisma.activityLog.create({ data: { userId: (session as any).user?.id, projectId: project.id, action: "TaskGroupDelete", entityType: "TaskGroup", metadata: { name } } });
+                          }
+                        }
+                        return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
+                      }}
+                    >
+                      <label className="flex items-center gap-2 text-xs text-zinc-600">
+                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
+                        Onaylıyorum
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Tümünü Kaldır</TooltipContent>
+                      </Tooltip>
+                    </form>
+                  )}
+                </div>
               </div>
             </div>
             <details className="mt-3 rounded-md border border-neutral-200 bg-white" open>
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-bold text-zinc-800">Filtreler</summary>
               <form
-              className="px-3 pb-3 flex flex-nowrap items-end gap-2 overflow-x-auto whitespace-nowrap"
+              className="px-3 pb-3 flex flex-wrap items-end gap-2"
               action={async (formData: FormData) => {
                 "use server";
                 const qs = new URLSearchParams();
                 const _q = String(formData.get("q") || "");
                 const _status = String(formData.get("status") || "");
                 const _priority = String(formData.get("priority") || "");
+                const _groupId = String(formData.get("groupId") || "");
+                const _assignedToId = String(formData.get("assignedToId") || "");
+                const _assignedTeamId = String(formData.get("assignedTeamId") || "");
+                const _managerId = String(formData.get("managerId") || "");
                 const _mine = formData.get("mine");
                 const _overdue = formData.get("overdue");
                 const _reset = formData.get("reset");
@@ -288,15 +1188,19 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                 if (_q) qs.set("q", _q);
                 if (_status) qs.set("status", _status);
                 if (_priority) qs.set("priority", _priority);
+                if (_groupId) qs.set("groupId", _groupId);
+                if (_assignedToId) qs.set("assignedToId", _assignedToId);
+                if (_assignedTeamId) qs.set("assignedTeamId", _assignedTeamId);
+                if (_managerId) qs.set("managerId", _managerId);
                 if (_mine) qs.set("mine", "1");
                 if (_overdue) qs.set("overdue", "1");
                 const url = `/projects/${id}?${qs.toString()}#overview`;
                 return (await import("next/navigation")).redirect(url);
               }}
             >
-              <div className="min-w-[220px] flex-1">
+              <div className="sm:min-w-[220px] min-w-0 flex-1">
                 <label className="mb-1 block text-xs text-zinc-500">Ara</label>
-                <Input name="q" defaultValue={q} placeholder="Başlık veya açıklama" className="min-w-[220px] flex-1" />
+                <Input name="q" defaultValue={q} placeholder="Başlık veya açıklama" className="w-full" />
               </div>
               <div className="flex items-end gap-3">
                 <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs text-zinc-600 bg-neutral-50">
@@ -308,9 +1212,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   Son tarihi geçen
                 </label>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <label className="text-xs text-zinc-600">Durum</label>
-                <select name="status" defaultValue={statusFilter} className="w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                <select name="status" defaultValue={statusFilter} className="w-full sm:w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
                   <option value="">Tümü</option>
                   <option value="ToDo">Yapılacak</option>
                   <option value="InProgress">Devam Ediyor</option>
@@ -318,14 +1222,50 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   <option value="Completed">Tamamlandı</option>
                 </select>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <label className="text-xs text-zinc-600">Öncelik</label>
-                <select name="priority" defaultValue={priorityFilter} className="w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                <select name="priority" defaultValue={priorityFilter} className="w-full sm:w-40 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
                   <option value="">Tümü</option>
                   <option value="Low">Low</option>
                   <option value="Medium">Medium</option>
                   <option value="High">High</option>
                   <option value="Critical">Critical</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label className="text-xs text-zinc-600">Grup</label>
+                <select name="groupId" defaultValue={groupFilter} className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                  <option value="">Tümü</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label className="text-xs text-zinc-600">Atanan</label>
+                <select name="assignedToId" defaultValue={assignedToFilter} className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                  <option value="">Tümü</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label className="text-xs text-zinc-600">Takım</label>
+                <select name="assignedTeamId" defaultValue={teamFilter} className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                  <option value="">Tümü</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label className="text-xs text-zinc-600">Yönetici</label>
+                <select name="managerId" defaultValue={managerFilter} className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+                  <option value="">Tümü</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex items-end gap-2">
@@ -337,7 +1277,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
             <details className="mt-3 rounded-md border border-neutral-200 bg-white" open>
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-bold text-zinc-800">Toplu İşlemler</summary>
               <form
-              className="px-3 pb-3 overflow-x-auto whitespace-nowrap"
+              className="px-3 pb-3"
               action={async (formData: FormData) => {
                 "use server";
                 const applyAll = formData.get("applyAll");
@@ -396,10 +1336,10 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
               }}
             >
               <div className="rounded-md border border-neutral-200 bg-white p-3">
-                <div className="flex flex-nowrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">İşlem</label>
-                    <select name="op" className="w-48 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                    <select name="op" className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="status">Durum</option>
                       <option value="priority">Öncelik</option>
                       <option value="assign">Atama</option>
@@ -414,7 +1354,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Durum</label>
-                    <select name="bulkStatus" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                    <select name="bulkStatus" className="w-full sm:w-40 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Seçiniz</option>
                       <option value="ToDo">Yapılacak</option>
                       <option value="InProgress">Devam Ediyor</option>
@@ -424,7 +1364,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Öncelik</label>
-                    <select name="bulkPriority" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                    <select name="bulkPriority" className="w-full sm:w-40 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Seçiniz</option>
                       <option value="Low">Low</option>
                       <option value="Medium">Medium</option>
@@ -434,7 +1374,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Atama</label>
-                    <select name="bulkAssignTo" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
+                    <select name="bulkAssignTo" className="w-full sm:w-48 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs">
                       <option value="">Yok</option>
                       {users.map((u) => (
                         <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
@@ -443,7 +1383,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-zinc-600">Son tarih</label>
-                    <input type="text" name="bulkDue" placeholder="gg.aa.yyyy" className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs" />
+                    <input type="text" name="bulkDue" placeholder="gg.aa.yyyy" className="w-full sm:w-40 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs" />
                   </div>
                   <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs text-zinc-600 bg-neutral-50">
                     <input type="checkbox" name="applyAll" className="h-4 w-4" />
@@ -462,6 +1402,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                     <tr className="text-left text-xs text-zinc-500">
                       <th className="px-3 py-2 w-8"></th>
                       <th className="px-3 py-2">Görev</th>
+                      <th className="px-3 py-2">Grup</th>
                       <th className="px-3 py-2">Durum</th>
                       <th className="px-3 py-2">Öncelik</th>
                       <th className="px-3 py-2">Atanan</th>
@@ -472,115 +1413,29 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   <tbody>
                     {tasks.map((t) => {
                       const assignedLabel = users.find((u) => u.id === (t.assignedToId as any))?.name ?? users.find((u) => u.id === (t.assignedToId as any))?.email ?? "Atanmadı";
+                      const teamLabel = teams.find((tm) => tm.id === (t.assignedTeamId as any))?.name ?? null;
+                      const managerLabel = (() => { const tm = teams.find((x) => x.id === (t.assignedTeamId as any)); const lead = tm?.members?.find((m: any) => m.role === "Lead" || m.role === "Manager"); return lead ? (lead.user?.name ?? lead.user?.email ?? null) : null; })();
                       const dueLabel = t.dueDate ? new Date(t.dueDate as any).toLocaleDateString() : "-";
                       return (
                         <tr key={t.id} className="border-t">
                           <td className="px-3 py-2 align-middle"><input type="checkbox" name="ids" value={t.id} /></td>
-                          <td className="px-3 py-2 align-middle min-w-0"><Link href={`/tasks/${t.id}`} className="hover:underline truncate inline-block max-w-[28ch]">{t.title}</Link></td>
+                          <td className="px-3 py-2 align-middle min-w-0"><Link href={`/tasks/${t.id}`} className="text-sm hover:underline break-words whitespace-normal">{t.title}</Link></td>
+                          <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{(t as any).taskGroup?.name ?? "-"}</td>
                           <td className="px-3 py-2 align-middle">
                             <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam Ediyor" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
                           </td>
                           <td className="px-3 py-2 align-middle">{t.priority}</td>
-                          <td className="px-3 py-2 align-middle">{assignedLabel}</td>
+                          <td className="px-3 py-2 align-middle">
+                            <div className="flex flex-wrap gap-1">
+                              {t.assignedToId ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Kişi: {assignedLabel}</Badge> : null}
+                              {teamLabel ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Takım: {teamLabel}</Badge> : null}
+                              {teamLabel && managerLabel ? <Badge className="bg-neutral-50 border-neutral-200 text-zinc-700">Yönetici: {managerLabel}</Badge> : null}
+                              {!t.assignedToId && !teamLabel ? <span className="text-xs text-zinc-500">Atama yok</span> : null}
+                            </div>
+                          </td>
                           <td className="px-3 py-2 align-middle">{dueLabel}</td>
                           <td className="px-3 py-2 align-middle">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm"><MoreVertical className="h-4 w-4" /></Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent>
-                                <DropdownMenuItem>
-                                  <form
-                                    className="flex items-center gap-2"
-                                    action={async (formData: FormData) => {
-                                      "use server";
-                                      const s = String(formData.get("status") || "");
-                                      if (s) await fetch(`/api/tasks?id=${t.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: s }) });
-                                      const qs = new URLSearchParams();
-                                      if (q) qs.set("q", q);
-                                      if (statusFilter) qs.set("status", statusFilter);
-                                      if (priorityFilter) qs.set("priority", priorityFilter);
-                                      return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
-                                    }}
-                                  >
-                                    <select name="status" defaultValue={t.status} className="rounded border px-2 py-1 text-xs">
-                                      <option value="ToDo">Yapılacak</option>
-                                      <option value="InProgress">Devam Ediyor</option>
-                                      <option value="Waiting">Beklemede</option>
-                                      <option value="Completed">Tamamlandı</option>
-                                    </select>
-                                    <Button type="submit" variant="outline" size="sm" className="text-[10px] p-1"><CheckCircle2 className="h-3 w-3" /></Button>
-                                  </form>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <form
-                                    className="flex items-center gap-2"
-                                    action={async (formData: FormData) => {
-                                      "use server";
-                                      const p = String(formData.get("priority") || "");
-                                      if (p) await fetch(`/api/tasks?id=${t.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: p }) });
-                                      const qs = new URLSearchParams();
-                                      if (q) qs.set("q", q);
-                                      if (statusFilter) qs.set("status", statusFilter);
-                                      if (priorityFilter) qs.set("priority", priorityFilter);
-                                      return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
-                                    }}
-                                  >
-                                    <select name="priority" defaultValue={t.priority as any} className="rounded border px-2 py-1 text-xs">
-                                      <option value="Low">Low</option>
-                                      <option value="Medium">Medium</option>
-                                      <option value="High">High</option>
-                                      <option value="Critical">Critical</option>
-                                    </select>
-                                    <Button type="submit" variant="outline" size="sm" className="text-[10px] p-1"><Flag className="h-3 w-3" /></Button>
-                                  </form>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <form
-                                    className="flex items-center gap-2"
-                                    action={async (formData: FormData) => {
-                                      "use server";
-                                      const to = String(formData.get("assignedToId") || "");
-                                      await fetch(`/api/tasks?id=${t.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ assignedToId: to || null }) });
-                                      const qs = new URLSearchParams();
-                                      if (q) qs.set("q", q);
-                                      if (statusFilter) qs.set("status", statusFilter);
-                                      if (priorityFilter) qs.set("priority", priorityFilter);
-                                      return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
-                                    }}
-                                  >
-                                    <select name="assignedToId" defaultValue={t.assignedToId ?? ""} className="rounded border px-2 py-1 text-xs">
-                                      <option value="">Atanmadı</option>
-                                      {users.map((u) => (
-                                        <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
-                                      ))}
-                                    </select>
-                                    <Button type="submit" variant="outline" size="sm" className="text-[10px] p-1"><User className="h-3 w-3" /></Button>
-                                  </form>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <form
-                                    className="flex items-center gap-2"
-                                    action={async (formData: FormData) => {
-                                      "use server";
-                                      const due = String(formData.get("due") || "");
-                                      await fetch(`/api/tasks?id=${t.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueDate: due }) });
-                                      const qs = new URLSearchParams();
-                                      if (q) qs.set("q", q);
-                                      if (statusFilter) qs.set("status", statusFilter);
-                                      if (priorityFilter) qs.set("priority", priorityFilter);
-                                      return (await import("next/navigation")).redirect(`/projects/${id}?${qs.toString()}#overview`);
-                                    }}
-                                  >
-                                    <input type="date" name="due" defaultValue={t.dueDate ? (() => { const d = new Date(t.dueDate as any); const pad = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; })() : undefined} className="rounded border px-2 py-1 text-xs" />
-                                    <Button type="submit" variant="outline" size="sm" className="text-[10px] p-1"><Calendar className="h-3 w-3" /></Button>
-                                  </form>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <Link href={`/tasks/${t.id}`} className="text-sm">Detaya git</Link>
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            <TaskRowActions task={{ id: t.id, status: t.status as any, priority: t.priority as any, assignedToId: t.assignedToId as any, dueDate: t.dueDate as any }} users={users} />
                           </td>
                         </tr>
                       );
@@ -595,6 +1450,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
               </div>
             </form>
             </details>
+            </TooltipProvider>
           </Card>
         </div>
       ),
@@ -629,16 +1485,16 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   return (
     <div className="space-y-6 overflow-x-hidden">
       <div className="sticky top-0 z-10 px-2 sm:px-4 lg:px-6 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/80 border-b border-[var(--border)] dark:bg-neutral-900/95 dark:supports-[backdrop-filter]:bg-neutral-900/80 dark:border-neutral-800">
-        <div className="flex items-center justify-between py-2 gap-3">
+        <div className="flex flex-wrap items-center justify-between py-2 gap-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold truncate">{project.title}</h1>
+            <h1 className="text-2xl font-semibold break-words whitespace-normal">{project.title}</h1>
             <div className="mt-1 flex items-center gap-2">
               <Badge className={project.status === "Done" ? "bg-green-600 border-green-700 text-white" : project.status === "Blocked" ? "bg-red-600 border-red-700 text-white" : project.status === "Active" ? "bg-indigo-600 border-indigo-700 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{project.status === "Done" ? "Tamamlandı" : project.status === "Blocked" ? "Bloklu" : project.status === "Active" ? "Aktif" : "Planlandı"}</Badge>
               <span className="text-sm text-zinc-600">Toplam {total} • Tamamlanan {done} • %{completedPct}</span>
             </div>
             <div className="mt-2 max-w-2xl"><Progress value={completedPct} /></div>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2 flex-wrap justify-end">
             <QuickTaskModal projectId={project.id} users={users} teams={teams} label="Görev Ekle" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -676,17 +1532,17 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
           <div className="mt-1 text-2xl font-semibold">{done}</div>
           <div className="mt-2">
             <Progress value={completedPct} />
-          </div>
-        </Card>
+            </div>
+          </Card>
         <Card className="transition duration-200 p-3 sm:p-4">
           <div className="flex items-center justify-between">
             <div className="text-sm text-zinc-600">Yaklaşan</div>
             <Calendar className="h-5 w-5 text-neutral-600" />
           </div>
           <div className="mt-1 space-y-1 text-sm text-zinc-700">
-            {upcoming.length === 0 ? <div>Görev yok</div> : upcoming.map((t) => (
+              {upcoming.length === 0 ? <div>Görev yok</div> : upcoming.map((t) => (
               <div key={t.id} className="flex items-center justify-between">
-                <span className="truncate">{t.title}</span>
+                <span className="break-words whitespace-normal">{t.title}</span>
                 <span className="text-xs text-zinc-500">{t.dueDate?.toLocaleDateString()}</span>
               </div>
             ))}
@@ -709,35 +1565,89 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
 }
 
 async function Timeline({ projectId }: { projectId: string }) {
-  const tasks = await prisma.task.findMany({ where: { projectId }, orderBy: { startDate: "asc" } });
-  const min = tasks.reduce<Date | null>((acc, t) => (!acc || (t.startDate && t.startDate < acc) ? t.startDate ?? acc : acc), null) ?? new Date();
+  let tasks: any[] = [];
+  try {
+    if (prisma.task?.findMany) {
+      tasks = await prisma.task.findMany({ where: { projectId }, orderBy: { startDate: "asc" }, include: { taskGroup: true } });
+    }
+  } catch {}
+  let projectTitle = "-";
+  try {
+    const p = await prisma.project.findUnique({ where: { id: projectId }, select: { title: true } });
+    projectTitle = p?.title ?? "-";
+  } catch {}
+  let users: Array<{ id: string; email: string; name: string | null }> = [];
+  try {
+    if (prisma.user?.findMany) {
+      users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, where: { deleted: false } });
+    }
+  } catch {}
+  const phaseOrder = [
+    "FAZ 1 – MEVCUT YAPI ANALİZİ",
+    "FAZ 2 – YENİ DOMAIN TASARIMI",
+    "FAZ 3 – WINDOWS SERVER 2019 KURULUMU",
+    "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA",
+    "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ",
+    "FAZ 6 – TEST, DOĞRULAMA VE KABUL",
+    "FAZ 7 – DOKÜMANTASYON VE DEVİR",
+    "FAZ 8 – BAŞARI KRİTERLERİ",
+  ];
+  const phaseIndex = (name?: string | null) => {
+    const i = phaseOrder.indexOf(name ?? "");
+    return i === -1 ? 999 : i;
+  };
+  tasks.sort((a, b) => {
+    const ia = phaseIndex((a as any).taskGroup?.name);
+    const ib = phaseIndex((b as any).taskGroup?.name);
+    if (ia !== ib) return ia - ib;
+    const sa = a.startDate ? a.startDate.getTime() : 0;
+    const sb = b.startDate ? b.startDate.getTime() : 0;
+    return sa - sb;
+  });
   return (
     <Card className="p-3 sm:p-4">
       <CardHeader>
-        <CardTitle>Timeline</CardTitle>
+        <CardTitle className="font-bold">Timeline</CardTitle>
       </CardHeader>
-      <div className="space-y-2">
-        {tasks.map((t) => {
-          const start = t.startDate ?? min;
-          const end = t.dueDate ?? start;
-          const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-          const barClass = t.priority === "Critical"
-            ? "bg-red-600"
-            : t.priority === "High"
-              ? "bg-amber-500"
-              : t.priority === "Medium"
-                ? "bg-indigo-600"
-                : "bg-neutral-500";
-          return (
-            <div key={t.id} className="flex items-center gap-2" title={`${days} gün`}>
-              <Link href={`/tasks/${t.id}`} className="w-48 text-sm truncate hover:underline">{t.title}</Link>
-              <div className="flex-1">
-                <Progress value={Math.min(100, days * 5)} barClassName={barClass} />
-              </div>
-              <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
-            </div>
-          );
-        })}
+      <div className="mt-2 overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-zinc-500">
+              <th className="px-3 py-2">Proje</th>
+              <th className="px-3 py-2">Grup</th>
+              <th className="px-3 py-2">Başlık</th>
+              <th className="px-3 py-2">Durum</th>
+              <th className="px-3 py-2">Öncelik</th>
+              <th className="px-3 py-2">Atanan</th>
+              <th className="px-3 py-2 w-20">İşlemler</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tasks.map((t) => {
+              const assignedLabel = users.find((u) => u.id === (t.assignedToId as any))?.name ?? users.find((u) => u.id === (t.assignedToId as any))?.email ?? "Atanmadı";
+              return (
+                <tr key={t.id} className="border-t">
+                  <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{projectTitle}</td>
+                  <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{(t as any).taskGroup?.name ?? "-"}</td>
+                  <td className="px-3 py-2 align-middle min-w-0"><Link href={`/tasks/${t.id}`} className="text-sm hover:underline break-words whitespace-normal">{t.title}</Link></td>
+                  <td className="px-3 py-2 align-middle">
+                    <Badge className={t.status === "Completed" ? "bg-green-600 border-green-700 text-white" : t.status === "InProgress" ? "bg-indigo-600 border-indigo-700 text-white" : t.status === "Waiting" ? "bg-amber-500 border-amber-600 text-white" : "bg-zinc-700 border-zinc-800 text-white"}>{t.status === "Completed" ? "Tamamlandı" : t.status === "InProgress" ? "Devam" : t.status === "Waiting" ? "Beklemede" : "Yapılacak"}</Badge>
+                  </td>
+                  <td className="px-3 py-2 align-middle">{t.priority}</td>
+                  <td className="px-3 py-2 align-middle text-xs text-zinc-600 break-words whitespace-normal">{assignedLabel}</td>
+                  <td className="px-3 py-2 align-middle">
+                    <TaskRowActions task={{ id: t.id, status: t.status as any, priority: t.priority as any, assignedToId: t.assignedToId as any, dueDate: t.dueDate as any }} users={users} />
+                  </td>
+                </tr>
+              );
+            })}
+            {tasks.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-2 text-sm text-zinc-600">Görev bulunamadı</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </Card>
   );

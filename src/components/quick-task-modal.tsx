@@ -16,7 +16,7 @@ export default function QuickTaskModal({
   projects?: Project[];
   projectId?: string;
   users?: Array<{ id: string; email: string; name: string | null }>;
-  teams?: Array<{ id: string; name: string }>;
+  teams?: Array<{ id: string; name: string; managerName?: string | null }>;
   label?: string;
 }) {
   const [open, setOpen] = useState(false);

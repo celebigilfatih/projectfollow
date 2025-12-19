@@ -48,3 +48,23 @@ body {
 button {
   cursor: pointer;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary) var(--border);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--border);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--primary);
+  border-radius: 9999px;
+  border: 2px solid var(--border);
+}

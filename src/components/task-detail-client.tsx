@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function TaskDetailClient({ task, users, teams }: { task: any; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string }> }) {
+export default function TaskDetailClient({ task, users, teams }: { task: any; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string; managerName?: string | null }> }) {
   const router = useRouter();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
@@ -17,14 +17,29 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
   const [assignedToId, setAssignedToId] = useState<string | undefined>(task.assignedToId ?? undefined);
   const [assignedTeamId, setAssignedTeamId] = useState<string | undefined>(task.assignedTeamId ?? undefined);
   const [assigneeIds, setAssigneeIds] = useState<string[]>(Array.isArray(task.assignees) ? task.assignees.map((a: any) => a.userId) : []);
+  const [taskGroupId, setTaskGroupId] = useState<string | undefined>(task.taskGroupId ?? undefined);
+  const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/task-groups?projectId=${task.projectId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active) setGroups(Array.isArray(data) ? data : []);
+      } catch {}
+    })();
+    return () => { active = false; };
+  }, [task.projectId]);
+
   async function save() {
     try {
       setSaving(true);
-      const res = await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description, status, priority, assignedToId, assignedTeamId, assigneeIds }) });
+      const res = await fetch(`/api/tasks?id=${task.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description, status, priority, assignedToId, assignedTeamId, assigneeIds, taskGroupId }) });
       if (!res.ok) throw new Error(String(res.status));
       toast.success("Görev güncellendi");
       router.refresh();
@@ -137,7 +152,21 @@ export default function TaskDetailClient({ task, users, teams }: { task: any; us
               <Select value={assignedTeamId ?? ""} onChange={(e) => setAssignedTeamId(e.target.value || undefined)}>
                 <option value="">Takım atanmadı</option>
                 {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>{`${t.name}${t.managerName ? ` – Yönetici: ${t.managerName}` : ""}`}</option>
+                ))}
+              </Select>
+              {assignedTeamId ? (
+                <div className="mt-1 text-xs text-zinc-600">
+                  {(() => { const tm = teams.find((x) => x.id === assignedTeamId); return tm?.managerName ? `Yönetici: ${tm.managerName}` : ""; })()}
+                </div>
+              ) : null}
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-xs text-zinc-600 mb-1">Grup</div>
+              <Select value={taskGroupId ?? ""} onChange={(e) => setTaskGroupId(e.target.value || undefined)}>
+                <option value="">Grup seçilmedi</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </Select>
             </div>

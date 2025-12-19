@@ -10,16 +10,26 @@ export async function GET(req: NextRequest) {
   const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
   const assignedToId = req.nextUrl.searchParams.get("assignedToId") ?? undefined;
   const assignedTeamId = req.nextUrl.searchParams.get("assignedTeamId") ?? undefined;
+  const teamManagerId = req.nextUrl.searchParams.get("teamManagerId") ?? undefined;
+  const taskGroupId = req.nextUrl.searchParams.get("taskGroupId") ?? undefined;
   const status = req.nextUrl.searchParams.get("status") as any;
   const priority = req.nextUrl.searchParams.get("priority") as any;
   const q = req.nextUrl.searchParams.get("q") ?? undefined;
   const mine = req.nextUrl.searchParams.get("mine");
   const userId = (session as any).user?.id as string | undefined;
+  let teamFilter: any = undefined;
+  if (teamManagerId) {
+    const mgrTeams = await prisma.team.findMany({ where: { members: { some: { userId: teamManagerId, role: { in: ["Lead", "Manager"] } } } }, select: { id: true } });
+    const ids = mgrTeams.map((t) => t.id);
+    teamFilter = ids.length > 0 ? { in: ids } : "__none__";
+  }
   const tasks = await prisma.task.findMany({
     where: {
       projectId,
+      taskGroupId,
       assignedToId: mine ? userId : assignedToId,
-      assignedTeamId,
+      ...(assignedTeamId ? { assignedTeamId } : {}),
+      ...(teamFilter && teamFilter !== "__none__" ? { assignedTeamId: teamFilter } : {}),
       status: status || undefined,
       priority: priority || undefined,
       OR: q
@@ -48,6 +58,7 @@ export async function POST(req: NextRequest) {
   if (typeof data.startDate === "string" && data.startDate) data.startDate = new Date(data.startDate);
   if (typeof data.assignedToId === "string" && data.assignedToId.trim() === "") delete data.assignedToId;
   if (typeof data.assignedTeamId === "string" && data.assignedTeamId.trim() === "") delete data.assignedTeamId;
+  if (typeof data.taskGroupId === "string" && data.taskGroupId.trim() === "") delete data.taskGroupId;
   const created = await prisma.task.create({ data });
   if (assigneeIds && assigneeIds.length > 0) {
     await prisma.$transaction(assigneeIds.map((uid) => prisma.taskAssignee.create({ data: { taskId: created.id, userId: uid } })));
@@ -71,6 +82,7 @@ export async function PATCH(req: NextRequest) {
   if (typeof data.startDate === "string" && data.startDate) data.startDate = new Date(data.startDate);
   if (typeof data.assignedToId === "string" && data.assignedToId.trim() === "") delete data.assignedToId;
   if (typeof data.assignedTeamId === "string" && data.assignedTeamId.trim() === "") delete data.assignedTeamId;
+  if (typeof data.taskGroupId === "string" && data.taskGroupId.trim() === "") delete data.taskGroupId;
   const updated = await prisma.task.update({ where: { id }, data });
   if (assigneeIds) {
     const current = await prisma.taskAssignee.findMany({ where: { taskId: id } });

@@ -1,12 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
-export default function TaskCreateForm({ projectId, users = [], teams = [], defaultShowAdvanced }: { projectId: string; users?: Array<{ id: string; email: string; name: string | null }>; teams?: Array<{ id: string; name: string }>; defaultShowAdvanced?: boolean }) {
+export default function TaskCreateForm({ projectId, users = [], teams = [], defaultShowAdvanced }: { projectId: string; users?: Array<{ id: string; email: string; name: string | null }>; teams?: Array<{ id: string; name: string; managerName?: string | null }>; defaultShowAdvanced?: boolean }) {
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(!!defaultShowAdvanced);
@@ -18,6 +18,44 @@ export default function TaskCreateForm({ projectId, users = [], teams = [], defa
   const [status, setStatus] = useState<string>("ToDo");
   const [priority, setPriority] = useState<string>("Medium");
   const [description, setDescription] = useState<string>("");
+  const [taskGroupId, setTaskGroupId] = useState<string>("");
+  const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const [newGroupName, setNewGroupName] = useState<string>("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/task-groups?projectId=${projectId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active) setGroups(Array.isArray(data) ? data : []);
+      } catch {}
+    })();
+    return () => { active = false; };
+  }, [projectId]);
+
+  async function createGroup() {
+    if (!newGroupName.trim()) return;
+    try {
+      setCreatingGroup(true);
+      const res = await fetch("/api/task-groups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, name: newGroupName.trim() }) });
+      setCreatingGroup(false);
+      if (!res.ok) {
+        toast.error("Grup oluşturulamadı");
+        return;
+      }
+      const created = await res.json();
+      setGroups((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setTaskGroupId(created.id);
+      setNewGroupName("");
+      toast.success("Grup oluşturuldu");
+    } catch {
+      setCreatingGroup(false);
+      toast.error("Grup oluşturulamadı");
+    }
+  }
 
   async function create() {
     if (!title.trim()) return;
@@ -29,11 +67,12 @@ export default function TaskCreateForm({ projectId, users = [], teams = [], defa
     if (dueDate) body.dueDate = dueDate;
     if (startDate) body.startDate = startDate;
     if (description.trim()) body.description = description.trim();
+    if (taskGroupId) body.taskGroupId = taskGroupId;
     const res = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     setCreating(false);
     if (res.ok) {
       toast.success("Görev oluşturuldu");
-      setTitle(""); setAssignedToId(""); setAssignedTeamId(""); setAssigneeIds([]); setDueDate(""); setStartDate(""); setDescription(""); setStatus("ToDo"); setPriority("Medium");
+      setTitle(""); setAssignedToId(""); setAssignedTeamId(""); setAssigneeIds([]); setDueDate(""); setStartDate(""); setDescription(""); setStatus("ToDo"); setPriority("Medium"); setTaskGroupId("");
       location.reload();
     } else {
       toast.error("Görev oluşturulamadı");
@@ -78,6 +117,24 @@ export default function TaskCreateForm({ projectId, users = [], teams = [], defa
             </div>
           </div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Grup</div>
+              <Select value={taskGroupId} onChange={(e) => setTaskGroupId(e.target.value)}>
+                <option value="">Grup seçilmedi</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-600 mb-1">Yeni grup</div>
+              <div className="flex items-center gap-2">
+                <Input placeholder="FAZ-1" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+                <Button size="sm" onClick={createGroup} disabled={creatingGroup || !newGroupName.trim()}>Oluştur</Button>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {users.length > 0 ? (
               <div>
                 <div className="text-xs text-zinc-600 mb-1">Kişi</div>
@@ -95,7 +152,7 @@ export default function TaskCreateForm({ projectId, users = [], teams = [], defa
                 <Select value={assignedTeamId} onChange={(e) => setAssignedTeamId(e.target.value)}>
                   <option value="">Takım atanmadı</option>
                   {teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
+                    <option key={t.id} value={t.id}>{`${t.name}${t.managerName ? ` – Yönetici: ${t.managerName}` : ""}`}</option>
                   ))}
                 </Select>
               </div>

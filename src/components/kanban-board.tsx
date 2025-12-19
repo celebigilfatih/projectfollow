@@ -36,10 +36,11 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
   const [priority, setPriority] = useState<string>("");
   const [assignedToId, setAssignedToId] = useState<string>("");
   const [assignedTeamId, setAssignedTeamId] = useState<string>("");
+  const [teamManagerId, setTeamManagerId] = useState<string>("");
   const [q, setQ] = useState<string>("");
   const [mine, setMine] = useState<boolean>(false);
   const [users, setUsers] = useState<Array<{ id: string; email: string; name: string | null }>>([]);
-  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [teams, setTeams] = useState<Array<{ id: string; name: string; managerName?: string | null }>>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [newForm, setNewForm] = useState<Record<Task["status"], { title: string; priority: string; assignedToId: string; assignedTeamId: string; dueDate: string }>>({
     ToDo: { title: "", priority: "Medium", assignedToId: "", assignedTeamId: "", dueDate: "" },
@@ -179,6 +180,7 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
       if (assignedTeamId) params.set("assignedTeamId", assignedTeamId);
       if (q) params.set("q", q);
       if (mine) params.set("mine", "1");
+      if (teamManagerId) params.set("teamManagerId", teamManagerId);
       const res = await fetch(`/api/tasks?${params.toString()}`);
       if (!res.ok) {
         setTasks([]);
@@ -187,8 +189,8 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
       const data = await res.json();
       setTasks(Array.isArray(data) ? data.map((t: any) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, assignedToId: t.assignedToId ?? null, assignedTeamId: t.assignedTeamId ?? null, dueDate: t.dueDate ?? null, subtasks: t.subtasks ?? [] })) : []);
     })();
-  }, [projectId, priority, assignedToId, assignedTeamId, q, mine]);
-
+  }, [projectId, priority, assignedToId, assignedTeamId, q, mine, teamManagerId]);
+  
   useEffect(() => {
     (async () => {
       const res = await fetch(`/api/users`);
@@ -203,7 +205,7 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
       const res = await fetch(`/api/teams`);
       if (!res.ok) return;
       const data = await res.json();
-      setTeams(Array.isArray(data) ? data.map((t: any) => ({ id: t.id, name: t.name })) : []);
+      setTeams(Array.isArray(data) ? data.map((t: any) => ({ id: t.id, name: t.name, managerName: (() => { const lead = Array.isArray(t.members) ? t.members.find((m: any) => m.role === "Manager" || m.role === "Lead") : null; const nm = lead?.user?.name ?? lead?.user?.email ?? null; return nm || null; })() })) : []);
     })();
   }, []);
 
@@ -430,7 +432,7 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
           </div>
           <div className="mt-1 text-xs text-zinc-600">Seçili: {selected.length}</div>
         </div>
-        <div className="px-4 py-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="px-4 py-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ara" className="text-sm" />
           <Select value={priority} onChange={(e) => setPriority(e.target.value)} className="text-sm">
             <option value="">Öncelik (tümü)</option>
@@ -448,7 +450,13 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
           <Select value={assignedTeamId} onChange={(e) => setAssignedTeamId(e.target.value)} className="text-sm">
             <option value="">Takım (tümü)</option>
             {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>{`${t.name}${t.managerName ? ` – Yönetici: ${t.managerName}` : ""}`}</option>
+            ))}
+          </Select>
+          <Select value={teamManagerId} onChange={(e) => setTeamManagerId(e.target.value)} className="text-sm">
+            <option value="">Yönetici (tümü)</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.name ?? u.email}</option>
             ))}
           </Select>
           <label className="md:col-span-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Sadece benim görevlerim</label>
@@ -594,7 +602,7 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
             <option value="">Toplu takım ataması</option>
             <option value="__none__">Takım atamasını kaldır</option>
             {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>{`${t.name}${t.managerName ? ` – Yönetici: ${t.managerName}` : ""}`}</option>
             ))}
           </Select>
           </div>
@@ -724,7 +732,7 @@ function KanbanColumn({ id, label, percent: _percent, completion: _completion, c
   );
 }
 
-function KanbanCard({ id, title, priority, users, teams, assignedToId, assignedTeamId, dueDate, assigneeIds = [], onDelete, onStatusChange: _onStatusChange, selected, onToggleSelect, status }: { id: string; title: string; priority: Task["priority"]; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string }>; assignedToId: string | null; assignedTeamId: string | null; dueDate: string | null; assigneeIds?: string[]; onDelete: () => void; onStatusChange: (status: Task["status"]) => void; selected: boolean; onToggleSelect: (checked: boolean) => void; status: Task["status"] }) {
+function KanbanCard({ id, title, priority, users, teams, assignedToId, assignedTeamId, dueDate, assigneeIds = [], onDelete, onStatusChange: _onStatusChange, selected, onToggleSelect, status }: { id: string; title: string; priority: Task["priority"]; users: Array<{ id: string; email: string; name: string | null }>; teams: Array<{ id: string; name: string; managerName?: string | null }>; assignedToId: string | null; assignedTeamId: string | null; dueDate: string | null; assigneeIds?: string[]; onDelete: () => void; onStatusChange: (status: Task["status"]) => void; selected: boolean; onToggleSelect: (checked: boolean) => void; status: Task["status"] }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id });
   const style: React.CSSProperties = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : {};
   void _onStatusChange;
@@ -787,7 +795,7 @@ function KanbanCard({ id, title, priority, users, teams, assignedToId, assignedT
           <div className="flex items-center gap-1"><User className="h-3 w-3" /> {(users.find((u) => u.id === assignedToId)?.name ?? users.find((u) => u.id === assignedToId)?.email) || ""}</div>
         ) : null}
         {assignedTeamId ? (
-          <div className="flex items-center gap-1"><Users className="h-3 w-3" /> {(teams.find((t) => t.id === assignedTeamId)?.name) || ""}</div>
+          <div className="flex items-center gap-1"><Users className="h-3 w-3" /> {(() => { const tm = teams.find((t) => t.id === assignedTeamId); return tm ? `${tm.name}${tm.managerName ? ` • Yönetici: ${tm.managerName}` : ""}` : ""; })()}</div>
         ) : null}
         {assigneeIds && assigneeIds.length > 0 ? (
           <div className="flex items-center gap-1">

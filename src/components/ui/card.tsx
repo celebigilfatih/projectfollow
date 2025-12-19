@@ -11,5 +11,5 @@ export function CardHeader({ className, children }: { className?: string; childr
 }
 
 export function CardTitle({ className, children }: { className?: string; children: ReactNode }) {
-  return <h2 className={twMerge("text-lg font-medium", className)}>{children}</h2>;
+  return <h2 className={twMerge("text-lg font-bold", className)}>{children}</h2>;
 }

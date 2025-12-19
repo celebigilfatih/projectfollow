@@ -74,6 +74,7 @@ export default function UserTeamsMenuItem({ user, teams }: { user: { id: string;
                       >
                         <option value="Member">Member</option>
                         <option value="Lead">Lead</option>
+                        <option value="Manager">Manager</option>
                       </select>
                     </div>
                   );
