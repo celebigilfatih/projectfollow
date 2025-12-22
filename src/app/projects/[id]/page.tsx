@@ -5,6 +5,8 @@ import { notFound, redirect } from "next/navigation";
 import { RBAC } from "@/lib/rbac";
 import { Tabs } from "@/components/ui/tabs";
 import Link from "next/link";
+import TaskListModal from "@/components/task-list-modal";
+import ConfirmDeleteModalButton from "@/components/confirm-delete-modal-button";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -14,9 +16,9 @@ import KanbanBoard from "@/components/kanban-board";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FolderKanban, ListTodo, CheckCircle2, Calendar, MoreVertical, Download, AlertTriangle, Clock, Plus, Trash2, ArrowUpDown, ChevronUp, ChevronDown } from "lucide-react";
+import { FolderKanban, ListTodo, CheckCircle2, Calendar, MoreVertical, Download, AlertTriangle, Clock, Plus, ArrowUpDown, ChevronUp, ChevronDown } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import TaskRowActions from "@/components/task-row-actions";
 import ThemeToggle from "@/components/theme-toggle";
 
@@ -75,16 +77,18 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
   const managerFilter = sp.managerId && sp.managerId !== "" ? sp.managerId : "";
   const mineFilter = sp.mine && sp.mine !== "" ? true : false;
   const overdueFilter = sp.overdue && sp.overdue !== "" ? true : false;
+  const dueFilter = sp.due && sp.due !== "" ? String(sp.due) : "";
   const upcomingLimit = sp.upLimit && !isNaN(Number(sp.upLimit)) ? Math.min(20, Math.max(1, parseInt(sp.upLimit))) : 5;
   const tlSort = sp.tlSort && sp.tlSort !== "" ? sp.tlSort : "phase_start";
   const tlDir = sp.tlDir === "desc" ? "desc" : "asc";
   // upcoming tiles use categorized buckets below
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const daysAhead = (d: Date) => Math.floor((new Date(d).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24));
   const upcomingActive = project.tasks.filter((t) => t.dueDate && (t.dueDate as any) > now && t.status !== "Completed");
-  const upcomingToday = upcomingActive
-    .filter((t) => daysAhead(t.dueDate as any) === 0)
+  const upcomingToday = project.tasks
+    .filter((t) => t.dueDate && t.status !== "Completed" && (t.dueDate as any) >= startOfToday && (t.dueDate as any) < endOfToday)
     .sort((a, b) => ((a.dueDate as any).getTime() - (b.dueDate as any).getTime()))
     .slice(0, upcomingLimit);
   const upcoming3d = upcomingActive
@@ -115,7 +119,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
     medium: total ? Math.round((mediumCount / total) * 100) : 0,
     low: total ? Math.round((lowCount / total) * 100) : 0,
   };
-  const upcomingTotal = upcomingActive.length;
+  const upcomingTotal = upcomingToday.length + upcoming3d.length + upcoming1w.length;
   const upcomingPct = {
     today: upcomingTotal ? Math.round((upcomingToday.length / upcomingTotal) * 100) : 0,
     three: upcomingTotal ? Math.round((upcoming3d.length / upcomingTotal) * 100) : 0,
@@ -135,7 +139,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
       ...(managerFilter && managerTeamIds.length > 0 ? { assignedTeamId: { in: managerTeamIds } } : {}),
       ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }] } : {}),
       ...(mineFilter && userId ? { assignedToId: userId } : {}),
-      ...(overdueFilter ? { dueDate: { lt: new Date() } } : {}),
+      ...(overdueFilter ? { dueDate: { lt: new Date() }, status: { not: "Completed" } } : {}),
+      ...(dueFilter === "today" ? { dueDate: { gte: startOfToday, lt: endOfToday }, status: { not: "Completed" } } : {}),
     },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
   });
@@ -196,6 +201,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                       )}
                     </div>
+                    {!groups.some((g) => g.name === "FAZ 1 – MEVCUT YAPI ANALİZİ") && (
                     <form
                       action={async () => {
                         "use server";
@@ -228,8 +234,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                     >
                       <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                     </form>
+                    )}
                     {groups.some((g) => g.name === "FAZ 1 – MEVCUT YAPI ANALİZİ") && canRemove && (
-                      <form
+                      <form id="del-faz1"
                         action={async (formData: FormData) => {
                           "use server";
                           const session = await getServerSession(authConfig as any);
@@ -261,16 +268,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                           return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                         }}
                       >
-                        <label className="flex items-center gap-2 text-xs text-zinc-600">
-                          <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                          Onaylıyorum
-                        </label>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Kaldır</TooltipContent>
-                        </Tooltip>
+                        <input type="hidden" name="confirmDelete" value="1" />
+                        <ConfirmDeleteModalButton formId="del-faz1" title="FAZ 1 – Mevcut Yapı Analizi" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                       </form>
                     )}
                   </div>
@@ -283,6 +282,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 2 – YENİ DOMAIN TASARIMI") && (
                   <form
                     action={async () => {
                       "use server";
@@ -316,8 +316,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 2 – YENİ DOMAIN TASARIMI") && canRemove && (
-                    <form
+                    <form id="del-faz2"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -349,16 +350,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz2" title="FAZ 2 – Yeni Domain Tasarımı" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -371,6 +364,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 3 – WINDOWS SERVER 2019 KURULUMU") && (
                   <form
                     action={async () => {
                       "use server";
@@ -402,8 +396,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 3 – WINDOWS SERVER 2019 KURULUMU") && canRemove && (
-                    <form
+                    <form id="del-faz3"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -435,16 +430,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz3" title="FAZ 3 – Windows Server 2019 Kurulumu" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -457,6 +444,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA") && (
                   <form
                     action={async () => {
                       "use server";
@@ -488,8 +476,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA") && canRemove && (
-                    <form
+                    <form id="del-faz4"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -521,16 +510,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz4" title="FAZ 4 – OU, Kullanıcı ve Grup Oluşturma" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -543,6 +524,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ") && (
                   <form
                     action={async () => {
                       "use server";
@@ -573,8 +555,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ") && canRemove && (
-                    <form
+                    <form id="del-faz5"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -606,16 +589,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz5" title="FAZ 5 – Daire Başkanlığı Bazlı Geçiş" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -628,6 +603,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 6 – TEST, DOĞRULAMA VE KABUL") && (
                   <form
                     action={async () => {
                       "use server";
@@ -659,8 +635,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 6 – TEST, DOĞRULAMA VE KABUL") && canRemove && (
-                    <form
+                    <form id="del-faz6"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -692,16 +669,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz6" title="FAZ 6 – Test, Doğrulama ve Kabul" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -714,6 +683,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
                     )}
                   </div>
+                  {!groups.some((g) => g.name === "FAZ 7 – DOKÜMANTASYON VE DEVİR") && (
                   <form
                     action={async () => {
                       "use server";
@@ -744,8 +714,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm" className="flex items-center gap-1"><Plus className="h-4 w-4" />Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 7 – DOKÜMANTASYON VE DEVİR") && canRemove && (
-                    <form
+                    <form id="del-faz7"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -777,16 +748,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz7" title="FAZ 7 – Dokümantasyon ve Devir" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -794,6 +757,10 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
               <div className="rounded-md border border-neutral-200 bg-white p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs text-zinc-600">FAZ 8 – Başarı Kriterleri</div>
+                  {groups.some((g) => g.name === "FAZ 8 – BAŞARI KRİTERLERİ") && (
+                    <Badge className="bg-green-100 border-green-200 text-green-700">Eklendi</Badge>
+                  )}
+                  {!groups.some((g) => g.name === "FAZ 8 – BAŞARI KRİTERLERİ") && (
                   <form
                     action={async () => {
                       "use server";
@@ -824,8 +791,9 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   >
                     <Button type="submit" variant="outline" size="sm">Ekle</Button>
                   </form>
+                  )}
                   {groups.some((g) => g.name === "FAZ 8 – BAŞARI KRİTERLERİ") && canRemove && (
-                    <form
+                    <form id="del-faz8"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -857,16 +825,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-faz8" title="FAZ 8 – Başarı Kriterleri" description="Grup ve tüm görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -962,7 +922,22 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                       return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                     }}
                   >
+                  {(() => {
+                    const names = [
+                      "FAZ 1 – MEVCUT YAPI ANALİZİ",
+                      "FAZ 2 – YENİ DOMAIN TASARIMI",
+                      "FAZ 3 – WINDOWS SERVER 2019 KURULUMU",
+                      "FAZ 4 – OU, KULLANICI VE GRUP OLUŞTURMA",
+                      "FAZ 5 – DAİRE BAŞKANLIĞI BAZLI GEÇİŞ",
+                      "FAZ 6 – TEST, DOĞRULAMA VE KABUL",
+                      "FAZ 7 – DOKÜMANTASYON VE DEVİR",
+                      "FAZ 8 – BAŞARI KRİTERLERİ",
+                    ];
+                    const anyMissing = names.some((n) => !groups.some((g) => g.name === n));
+                    return anyMissing;
+                  })() && (
                     <Button type="submit" variant="default" size="sm">Tümünü Ekle</Button>
+                  )}
                   </form>
                   {(() => {
                     const names = [
@@ -977,7 +952,7 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                     ];
                     return names.some((n) => groups.some((g) => g.name === n));
                   })() && canRemove && (
-                    <form
+                    <form id="del-all"
                       action={async (formData: FormData) => {
                         "use server";
                         const session = await getServerSession(authConfig as any);
@@ -1020,16 +995,8 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                         return (await import("next/navigation")).redirect(`/projects/${project.id}#overview`);
                       }}
                     >
-                      <label className="flex items-center gap-2 text-xs text-zinc-600">
-                        <input type="checkbox" name="confirmDelete" value="1" className="h-4 w-4" />
-                        Onaylıyorum
-                      </label>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="submit" variant="ghost" size="sm" className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Tümünü Kaldır</TooltipContent>
-                      </Tooltip>
+                      <input type="hidden" name="confirmDelete" value="1" />
+                      <ConfirmDeleteModalButton formId="del-all" title="Tüm Fazları Kaldır" description="Tüm faz grupları ve görevler silinecek. Bu işlem geri alınamaz." />
                     </form>
                   )}
                 </div>
@@ -1391,7 +1358,12 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
           <Card className="transition duration-200 p-3 sm:p-4">
             <CardHeader>
               <CardTitle className="font-bold">Özet</CardTitle>
-              <div className="mt-1 text-xs text-zinc-600">{completedPct}% tamamlanma • {criticalCount} kritik • {overdueCount} geciken</div>
+              <div className="mt-1 text-xs text-zinc-600">
+                {completedPct}% tamamlanma •
+                <Link href={`/projects/${project.id}?priority=Critical#overview`} className="ml-1 hover:underline">{criticalCount} kritik</Link>
+                •
+                <Link href={`/projects/${project.id}?overdue=1#overview`} className="ml-1 hover:underline">{overdueCount} geciken</Link>
+              </div>
             </CardHeader>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-2">
@@ -1450,22 +1422,36 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                   <div className="mt-2"><Progress value={completedPct} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-md border border-neutral-200 bg-white p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm text-zinc-600">Kritik</div>
-                      <AlertTriangle className="h-5 w-5 text-red-600" />
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold">{criticalCount}</div>
-                    <div className="mt-2"><Progress value={total ? Math.round((criticalCount / total) * 100) : 0} /></div>
-                  </div>
-                  <div className="rounded-md border border-neutral-200 bg-white p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm text-zinc-600">Geçiken</div>
-                      <Clock className="h-5 w-5 text-amber-500" />
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold">{overdueCount}</div>
-                    <div className="mt-2"><Progress value={total ? Math.round((overdueCount / total) * 100) : 0} /></div>
-                  </div>
+                  <TaskListModal
+                    projectId={project.id}
+                    title="Kritik Görevler"
+                    params={{ priority: "Critical" }}
+                    trigger={
+                      <div className="rounded-md border border-neutral-200 bg-white p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-zinc-600">Kritik</div>
+                          <AlertTriangle className="h-5 w-5 text-red-600" />
+                        </div>
+                        <div className="mt-1 text-2xl font-semibold">{criticalCount}</div>
+                        <div className="mt-2"><Progress value={total ? Math.round((criticalCount / total) * 100) : 0} /></div>
+                      </div>
+                    }
+                  />
+                  <TaskListModal
+                    projectId={project.id}
+                    title="Geçiken Görevler"
+                    params={{ overdue: "1" }}
+                    trigger={
+                      <div className="rounded-md border border-neutral-200 bg-white p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-zinc-600">Geçiken</div>
+                          <Clock className="h-5 w-5 text-amber-500" />
+                        </div>
+                        <div className="mt-1 text-2xl font-semibold">{overdueCount}</div>
+                        <div className="mt-2"><Progress value={total ? Math.round((overdueCount / total) * 100) : 0} /></div>
+                      </div>
+                    }
+                  />
                   <div className="col-span-2 rounded-md border border-neutral-200 bg-white p-3">
                   <div className="text-sm text-zinc-600">Öncelik Dağılımı</div>
                     <div className="mt-2 flex h-2 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
@@ -1508,10 +1494,17 @@ export default async function ProjectDetailPage({ params, searchParams }: { para
                     </form>
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2">
-                    <div className="rounded-md border border-neutral-200 bg-white p-2">
-                      <div className="text-xs text-zinc-600">Bugün</div>
-                      <div className="text-lg font-semibold">{upcomingToday.length || 0}</div>
-                    </div>
+                    <TaskListModal
+                      projectId={project.id}
+                      title="Bugün (Yaklaşan)"
+                      params={{ due: "today" }}
+                      trigger={
+                        <div className="rounded-md border border-neutral-200 bg-white p-2">
+                          <div className="text-xs text-zinc-600">Bugün</div>
+                          <div className="text-lg font-semibold">{upcomingToday.length || 0}</div>
+                        </div>
+                      }
+                    />
                     <div className="rounded-md border border-neutral-200 bg-white p-2">
                       <div className="text-xs text-zinc-600">+3 gün</div>
                       <div className="text-lg font-semibold">{upcoming3d.length || 0}</div>

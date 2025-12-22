@@ -2,12 +2,15 @@ import { getServerSession } from "next-auth";
 import { authConfig } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { RoleName } from "@prisma/client";
-import { Pencil, Trash2, MoreVertical } from "lucide-react";
+import { RBAC } from "@/lib/rbac";
+ 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import CreateUserModal from "@/components/create-user-modal";
+import UserEditMenuItem from "@/components/user-edit-modal";
+import ConfirmDeleteModalButton from "@/components/confirm-delete-modal-button";
 
 export default async function PeoplePage({ searchParams }: { searchParams?: { q?: string } }) {
   const session = await getServerSession(authConfig as any);
@@ -26,7 +29,7 @@ export default async function PeoplePage({ searchParams }: { searchParams?: { q?
             ]
           : undefined,
       },
-      include: { roles: { include: { role: true } } },
+      include: { roles: { include: { role: true } }, teamMemberships: { include: { team: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.team.findMany({ select: { id: true, name: true } }),
@@ -73,19 +76,10 @@ export default async function PeoplePage({ searchParams }: { searchParams?: { q?
               </td>
               <td className="py-2">
                 {roles?.includes(RoleName.Admin) ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" aria-label="İşlemler" title="İşlemler"><MoreVertical className="h-4 w-4" /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent>
-                      <DropdownMenuItem>
-                        <EditUserForm id={u.id} email={u.email} name={u.name ?? ""} q={q} />
-                      </DropdownMenuItem>
-                      <DropdownMenuItem>
-                        <DeleteUserForm id={u.id} q={q} />
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div className="flex items-center gap-2">
+                    <UserEditMenuItem user={u as any} teams={teams} mode="icon" />
+                    <DeleteUserForm id={u.id} email={u.email} name={u.name ?? ""} q={q} />
+                  </div>
                 ) : null}
               </td>
             </tr>
@@ -98,37 +92,38 @@ export default async function PeoplePage({ searchParams }: { searchParams?: { q?
 }
 
 
-function EditUserForm({ id, email, name, q }: { id: string; email: string; name: string; q?: string }) {
+
+function DeleteUserForm({ id, email, name, q }: { id: string; email: string; name?: string; q?: string }) {
   return (
-    <form
-      className="flex items-center gap-2"
+    <form id={`del-user-${id}`}
       action={async (formData: FormData) => {
         "use server";
-        const body = { email: String(formData.get("email") || email), name: String(formData.get("name") || name) };
-        await fetch(`${process.env.NEXTAUTH_URL}/api/users?id=${id}`, { method: "PATCH", body: JSON.stringify(body) });
+        const session = await getServerSession(authConfig as any);
+        if (!session) return;
+        const roles = (session as any).roles as any[] | undefined;
+        if (!RBAC.canManageAll(roles)) {
+          return (await import("next/navigation")).redirect(`/people?q=${encodeURIComponent(q || "")}&error=forbidden`);
+        }
+        const ok = formData.get("confirmDelete");
+        if (!ok) {
+          const url = q && q.length > 0 ? `/people?q=${encodeURIComponent(q)}` : "/people";
+          return (await import("next/navigation")).redirect(url);
+        }
+        await prisma.user.update({ where: { id }, data: { deleted: true } });
+        await prisma.session.deleteMany({ where: { userId: id } });
+        await prisma.account.deleteMany({ where: { userId: id } });
+        await prisma.activityLog.create({ data: { userId: (session as any).user?.id, action: "UserDelete", entityType: "User", metadata: { targetUserId: id } } });
         const url = q && q.length > 0 ? `/people?q=${encodeURIComponent(q)}` : "/people";
         return (await import("next/navigation")).redirect(url);
       }}
     >
-      <Input name="email" defaultValue={email} className="h-8 px-2 text-xs" />
-      <Input name="name" defaultValue={name} className="h-8 px-2 text-xs" />
-      <Button type="submit" variant="outline" size="sm" aria-label="Güncelle" title="Güncelle"><Pencil className="h-4 w-4" /></Button>
+      <input type="hidden" name="confirmDelete" value="1" />
+      <ConfirmDeleteModalButton
+        formId={`del-user-${id}`}
+        title={`Kullanıcıyı Sil — ${name && name.length > 0 ? name : email}`}
+        description={`${name && name.length > 0 ? name + " • " : ""}${email} kullanıcısı ve ilişkili oturumlar kaldırılacak. Bu işlem geri alınamaz.`}
+      />
     </form>
   );
 }
-
-function DeleteUserForm({ id, q }: { id: string; q?: string }) {
-  return (
-    <form
-      action={async () => {
-        "use server";
-        await fetch(`${process.env.NEXTAUTH_URL}/api/users?id=${id}`, { method: "DELETE" });
-        const url = q && q.length > 0 ? `/people?q=${encodeURIComponent(q)}` : "/people";
-        return (await import("next/navigation")).redirect(url);
-      }}
-    >
-      <Button type="submit" variant="destructive" size="sm" aria-label="Sil" title="Sil"><Trash2 className="h-4 w-4" /></Button>
-    </form>
-  );
-}
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+ 

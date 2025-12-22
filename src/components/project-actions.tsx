@@ -35,6 +35,7 @@ export default function ProjectActions({ project }: { project: Project }) {
   const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description ?? "");
@@ -230,7 +231,6 @@ export default function ProjectActions({ project }: { project: Project }) {
         await post(`/api/tasks/bulk/due`, { ids, dueDate: "" });
         toast.success(`Son tarih kaldırıldı (${ids.length})`);
       } else if (op === "delete") {
-        if (!confirm("Seçili görevleri silmek istiyor musunuz?")) { setApplyingBulk(false); return; }
         await post(`/api/tasks/bulk/delete`, { ids });
         toast.success(`Görevler silindi (${ids.length})`);
       } else if (op === "due_rel_today" || op === "due_rel_3d" || op === "due_rel_1w") {
@@ -616,7 +616,7 @@ export default function ProjectActions({ project }: { project: Project }) {
                             <Button variant="outline" size="sm" onClick={() => applyBulk("due_rel_1w")} disabled={applyingBulk || selected.length === 0}>+1 hafta</Button>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button variant="destructive" size="sm" onClick={() => applyBulk("delete")} disabled={applyingBulk || selected.length === 0}>Sil</Button>
+                            <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)} disabled={applyingBulk || selected.length === 0}>Sil</Button>
                             <Button variant="outline" size="sm" onClick={exportSelectedCSV} disabled={selected.length === 0}>CSV dışa aktar</Button>
                           </div>
                         </div>
@@ -677,10 +677,25 @@ export default function ProjectActions({ project }: { project: Project }) {
             <DialogTitle>Projeyi sil</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 text-sm">
-            <p>Bu işlemi onaylıyor musunuz? Bu proje ve ilişkili görevler kalıcı olarak silinecek.</p>
+            <p>Bu işlemi onaylıyor musunuz? Bu proje ve ilişkili görevler kalıcı olarak silinecek. Bu işlem geri alınamaz.</p>
             <div className="flex items-center justify-end gap-2">
               <Button variant="ghost" onClick={() => setDeleteOpen(false)}>Vazgeç</Button>
               <Button variant="destructive" onClick={confirmDelete} disabled={deleting} aria-label="Sil" title="Sil"><Trash2 className="h-4 w-4" /></Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Seçili görevleri sil</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p>Seçili görevler kalıcı olarak silinecek. Bu işlem geri alınamaz.</p>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => setBulkDeleteOpen(false)}>Vazgeç</Button>
+              <Button variant="destructive" onClick={async () => { setBulkDeleteOpen(false); await applyBulk("delete"); }} disabled={applyingBulk} aria-label="Sil" title="Sil"><Trash2 className="h-4 w-4" /></Button>
             </div>
           </div>
         </DialogContent>

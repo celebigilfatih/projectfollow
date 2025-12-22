@@ -14,6 +14,13 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "prisma/seed.js",
   ]),
+  // Allow CommonJS requires in Node scripts
+  {
+    files: ["scripts/**/*.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "off",

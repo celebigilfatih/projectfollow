@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
 import { Users } from "lucide-react";
 import { RBAC } from "@/lib/rbac";
+import ConfirmDeleteModalButton from "@/components/confirm-delete-modal-button";
 
 export default async function TeamsPage({ searchParams }: { searchParams?: Record<string, string | undefined> }) {
   const session = await getServerSession(authConfig as any);
@@ -121,14 +122,18 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Recor
             </details>
             <div className="mt-3 flex items-center gap-2">
               <Link href={`/teams/${t.id}`} className="rounded border px-2 py-1 text-xs">Detay</Link>
-              <form
-                action={async () => {
+              <form id={`del-team-${t.id}`}
+                action={async (formData: FormData) => {
                   "use server";
                   const session = await getServerSession(authConfig as any);
                   if (!session) return;
                   const roles = (session as any).roles as any[] | undefined;
                   if (!RBAC.canManageOwnProjects(roles) && !RBAC.canManageAll(roles)) {
                     return (await import("next/navigation")).redirect(`/teams?error=forbidden`);
+                  }
+                  const ok = formData.get("confirmDelete");
+                  if (!ok) {
+                    return (await import("next/navigation")).redirect(`/teams`);
                   }
                   await prisma.teamMember.deleteMany({ where: { teamId: t.id } });
                   await prisma.activityLog.deleteMany({ where: { teamId: t.id } });
@@ -137,7 +142,12 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Recor
                   return (await import("next/navigation")).redirect("/teams?ok=team_deleted");
                 }}
               >
-                <Button type="submit" variant="destructive" size="sm" className="text-[10px] px-2">Sil</Button>
+                <input type="hidden" name="confirmDelete" value="1" />
+                <ConfirmDeleteModalButton
+                  formId={`del-team-${t.id}`}
+                  title={`Takımı Sil — ${t.name}`}
+                  description={`Takım ve tüm üyelikler kaldırılacak. Takıma atanan görevlerin ataması kaldırılacak. Bu işlem geri alınamaz.`}
+                />
               </form>
             </div>
           </Card>

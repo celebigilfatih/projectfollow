@@ -16,6 +16,8 @@ export async function GET(req: NextRequest) {
   const priority = req.nextUrl.searchParams.get("priority") as any;
   const q = req.nextUrl.searchParams.get("q") ?? undefined;
   const mine = req.nextUrl.searchParams.get("mine");
+  const overdue = req.nextUrl.searchParams.get("overdue") ?? undefined;
+  const due = req.nextUrl.searchParams.get("due") ?? undefined;
   const userId = (session as any).user?.id as string | undefined;
   let teamFilter: any = undefined;
   if (teamManagerId) {
@@ -23,6 +25,9 @@ export async function GET(req: NextRequest) {
     const ids = mgrTeams.map((t) => t.id);
     teamFilter = ids.length > 0 ? { in: ids } : "__none__";
   }
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const tasks = await prisma.task.findMany({
     where: {
       projectId,
@@ -38,8 +43,10 @@ export async function GET(req: NextRequest) {
             { description: { contains: q, mode: "insensitive" } },
           ]
         : undefined,
+      ...(overdue ? { dueDate: { lt: now }, status: { not: "Completed" } } : {}),
+      ...(due === "today" ? { dueDate: { gte: startOfToday, lt: endOfToday }, status: { not: "Completed" } } : {}),
     },
-    include: { subtasks: true, comments: true, attachments: true, assignedTo: true, assignedTeam: true, project: true, assignees: { include: { user: true } } },
+    include: { subtasks: true, comments: true, attachments: true, assignedTo: true, assignedTeam: true, project: true, taskGroup: true, assignees: { include: { user: true } } },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
   });
   return NextResponse.json(tasks);

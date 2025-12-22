@@ -248,18 +248,18 @@ export default function KanbanBoard({ projectId }: { projectId: string }) {
     } else {
       nextDestIds.splice(overIndex, 0, activeId);
       const newColumns = { ...columns, [sourceStatus]: nextSourceIds, [destStatus]: nextDestIds };
-      updateStateFromColumns(newColumns, destStatus);
+      updateStateFromColumns(newColumns);
       await fetch(`/api/tasks?id=${activeId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: destStatus }) });
       await fetch(`/api/tasks/reorder`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, status: destStatus, ids: nextDestIds }) });
       await fetch(`/api/tasks/reorder`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, status: sourceStatus, ids: nextSourceIds }) });
     }
   }
 
-  function updateStateFromColumns(cols: Record<Task["status"], string[]>, updateStatus?: Task["status"]) {
+  function updateStateFromColumns(cols: Record<Task["status"], string[]>) {
     const idToTask = Object.fromEntries(tasks.map((t) => [t.id, t]));
     const next: Task[] = [];
     for (const s of STATUSES) {
-      for (const id of cols[s]) next.push({ ...idToTask[id], status: updateStatus ? (id === idToTask[id].id ? updateStatus : idToTask[id].status) : idToTask[id].status });
+      for (const id of cols[s]) next.push({ ...idToTask[id], status: s });
     }
     setTasks(next);
   }
